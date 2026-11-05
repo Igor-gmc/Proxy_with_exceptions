@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../Version.props" />
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>ProxyBridge</AssemblyName>
+    <ApplicationIcon>Assets/drive.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Only the managed ETW decoder is used; exclude unused profiler/symbol native helpers. -->
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" ExcludeAssets="build;buildTransitive" />
+    <Compile Include="../tests/ProtectionControllerTests.cs" Link="Tests/ProtectionControllerTests.cs" />
+    <Compile Include="../tests/ConnectionProbeTests.cs" Link="Tests/ConnectionProbeTests.cs" />
+    <InternalsVisibleTo Include="ProxyBridge.Integration" />
+    <InternalsVisibleTo Include="ProxyBridge.Activity.Tests" />
+    <InternalsVisibleTo Include="ProxyBridge.Diagnostics.Tests" />
+    <InternalsVisibleTo Include="ProxyBridge.Settings.Tests" />
+    <EmbeddedResource Include="Assets/*.ico" LogicalName="ProxyBridge.Icons.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../HELP.txt" LogicalName="ProxyBridge.Help.txt" />
+    <EmbeddedResource Include="../artifacts/payload.zip" LogicalName="ProxyBridge.Payload.zip" />
+  </ItemGroup>
+</Project>

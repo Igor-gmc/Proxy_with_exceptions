@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ProxyBridge.Integration</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>../ProxyBridge/app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../ProxyBridge/ProxyBridge.csproj" /></ItemGroup>
+</Project>

@@ -1,0 +1,31 @@
+sing-box 1.14.4, SagerNet
+https://github.com/SagerNet/sing-box/releases/tag/v1.14.4
+https://github.com/SagerNet/sing-box/tree/v1.14.4
+Archive SHA256 (verified against GitHub release asset digest):
+99185d75d314a07dbba4a130c8ad986cbeb629a07927975636b341ca61f991df
+License: GPL-3.0-or-later with additional terms; see core/SING-BOX-LICENSE.txt.
+
+Wintun 0.14.1, WireGuard LLC
+https://www.wintun.net/builds/wintun-0.14.1.zip
+https://git.zx2c4.com/wintun/
+License: see core/WINTUN-LICENSE.txt, including prebuilt binary license.
+Authenticode signer of amd64/wintun.dll verified: WireGuard LLC.
+
+Microsoft.Diagnostics.Tracing.TraceEvent 4.0.0, Microsoft / .NET Foundation
+https://www.nuget.org/packages/Microsoft.Diagnostics.Tracing.TraceEvent/4.0.0
+https://github.com/microsoft/perfview/tree/v4.0.0
+License: MIT; see core/TRACEEVENT-LICENSE.txt.
+Used for managed ETW event decoding. Unused build/native profiler and symbol
+helpers are excluded from the package assets copied by this application.
+
+Additional Microsoft managed runtime dependencies (MIT):
+Microsoft.Diagnostics.NETCore.Client 0.2.661903
+Microsoft.Extensions.DependencyInjection.Abstractions 8.0.2
+Microsoft.Extensions.Logging.Abstractions 8.0.3
+System.Reflection.TypeExtensions 4.7.0
+Source: https://github.com/dotnet/diagnostics and https://github.com/dotnet/runtime
+License: see core/DOTNET-LICENSE.txt. Framework-provided dependencies use the
+bundled .NET runtime. Exact resolved dependencies are recorded by NuGet assets.
+
+Source for this application is included in the project directory.
+Review third-party license terms before redistributing a binary bundle.

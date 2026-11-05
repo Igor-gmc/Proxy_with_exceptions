@@ -1,0 +1,14 @@
+<Project>
+  <!-- Increase Patch for each released fix, Minor for a feature release;
+       reset Patch when Minor changes. Rebuilding the same release keeps its version. -->
+  <PropertyGroup>
+    <ProxyBridgeMajor>0</ProxyBridgeMajor>
+    <ProxyBridgeMinor>3</ProxyBridgeMinor>
+    <ProxyBridgePatch>3</ProxyBridgePatch>
+    <Version>$(ProxyBridgeMajor).$(ProxyBridgeMinor).$(ProxyBridgePatch)</Version>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <FileVersion>$(AssemblyVersion)</FileVersion>
+    <InformationalVersion>$(ProxyBridgeMajor).$(ProxyBridgeMinor).$([System.Int32]::Parse('$(ProxyBridgePatch)').ToString('00'))</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>
