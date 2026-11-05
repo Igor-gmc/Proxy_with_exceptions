@@ -175,7 +175,6 @@ internal sealed partial class MainForm : Form
             Append("Окно скрыто в трей; приложение продолжает работу.");
             e.Cancel = true;
             Hide();
-            tray.ShowBalloonTip(2500, "ProxyBridge", "Приложение работает в трее.", ToolTipIcon.Info);
         }
         else
         {

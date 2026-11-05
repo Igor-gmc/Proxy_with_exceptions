@@ -4,7 +4,7 @@
   <PropertyGroup>
     <ProxyBridgeMajor>0</ProxyBridgeMajor>
     <ProxyBridgeMinor>3</ProxyBridgeMinor>
-    <ProxyBridgePatch>4</ProxyBridgePatch>
+    <ProxyBridgePatch>5</ProxyBridgePatch>
     <Version>$(ProxyBridgeMajor).$(ProxyBridgeMinor).$(ProxyBridgePatch)</Version>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <FileVersion>$(AssemblyVersion)</FileVersion>
