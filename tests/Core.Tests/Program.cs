@@ -52,6 +52,7 @@ var settings = new Settings("192.0.2.10", 1080, "qa-user", "synthetic-core-only"
 await ProtectionControllerTests.RunAsync(Test, settings);
 await ConnectionProbeTests.RunAsync(Test);
 await ConfigurationTests.RunAsync(Test);
+await DirectIpv6PolicyTests.RunAsync(Test);
 await ConfigurationParityTests.RunAsync(Test);
 await ApplicationCommandTests.RunAsync(Test);
 await ShippingAssemblyTests.RunAsync(Test);

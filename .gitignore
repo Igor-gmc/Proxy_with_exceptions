@@ -22,6 +22,9 @@
 !/tools/
 !/licenses/
 !/SECURITY.md
+!/docs/
+/docs/*
+!/docs/IPV6-DIRECT.md
 
 # Build output, packages and local runtime state (including encrypted settings).
 **/bin/

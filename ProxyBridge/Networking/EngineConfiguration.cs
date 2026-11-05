@@ -93,6 +93,28 @@ internal static class EngineConfiguration
         var rules = new List<object> { new { port = 53, action = "hijack-dns" } };
         if (settings.ExcludedApplications.Length > 0)
         {
+            // Reject public IPv6 when the current default IPv4 uplink lacks
+            // GUA/ULA addresses; this does not test general route reachability.
+            rules.Add(new
+            {
+                type = "logical",
+                mode = "and",
+                rules = new object[]
+                {
+                    new
+                    {
+                        process_path = settings.ExcludedApplications,
+                        ip_version = 6,
+                        ip_cidr = new[] { "2000::/3" }
+                    },
+                    new { default_interface_address = new[] { "0.0.0.0/0" } },
+                    new { default_interface_address = new[] { "2000::/3" }, invert = true },
+                    new { default_interface_address = new[] { "fc00::/7" }, invert = true }
+                },
+                action = "reject",
+                method = "default",
+                no_drop = true
+            });
             rules.Add(new
             {
                 process_path = settings.ExcludedApplications,

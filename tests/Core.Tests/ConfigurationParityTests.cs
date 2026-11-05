@@ -23,6 +23,17 @@ internal static class ConfigurationParityTests
                         ExcludedApplications = exclusions ? [@"C:\QA Apps\browser.exe"] : []
                     };
                     var actual = JsonNode.Parse(Engine.Configuration(settings));
+                    if (exclusions)
+                    {
+                        var actualRules = actual!["route"]!["rules"]!.AsArray();
+                        var baselineRules = expected!["route"]!["rules"]!.AsArray();
+                        if (actualRules.Count != baselineRules.Count + 1)
+                        {
+                            throw new InvalidOperationException("Expected exactly one additive IPv6 direct rule.");
+                        }
+                        DirectIpv6PolicyTests.RequireExactAddedRule(actualRules[1], settings.ExcludedApplications);
+                        actualRules.RemoveAt(1);
+                    }
                     if (!JsonNode.DeepEquals(expected, actual))
                     {
                         throw new InvalidOperationException("Generated configuration differs from the pre-refactoring baseline.");
