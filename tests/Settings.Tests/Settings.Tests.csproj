@@ -8,6 +8,7 @@
     <AssemblyName>ProxyBridge.Settings.Tests</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../SettingsTests.cs" Link="SettingsTests.cs" />
     <ProjectReference Include="../../ProxyBridge/ProxyBridge.csproj" />
   </ItemGroup>
 </Project>

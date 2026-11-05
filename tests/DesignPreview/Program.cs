@@ -18,6 +18,8 @@ internal static class Program
     static int failures;
     static string output = "";
     static Assembly app = null!;
+    static MethodInfo? monitorSuite;
+    static string? testHostSha256;
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
@@ -33,44 +35,103 @@ internal static class Program
     {
         string? dll = Value(args, "--dll");
         string? destination = Value(args, "--out");
-        if (dll == null || destination == null) {
-            Console.Error.WriteLine("Usage: DesignPreview --dll <ProxyBridge.dll> --out <new-artifacts-directory> [--verify] [--corners-only] [--desktop-corners]");
+        string? testHostDll = Value(args, "--test-host");
+        bool verify = args.Contains("--verify", StringComparer.Ordinal);
+        if (dll == null || destination == null || verify && testHostDll == null)
+        {
+            Console.Error.WriteLine("Usage: DesignPreview --dll <ProxyBridge.dll> --out <new-artifacts-directory> [--verify --test-host <absolute-ProxyBridge.TestHost.dll>] [--corners-only] [--desktop-corners]");
             return 2;
         }
         Form? form = null;
         string? error = null;
         string? hash = null;
         bool ownsOutput = false;
-        try {
+        try
+        {
             dll = Path.GetFullPath(dll);
             output = Path.GetFullPath(destination);
-            if (!File.Exists(dll)) throw new FileNotFoundException("Application DLL was not found.", dll);
+            if (!File.Exists(dll))
+            {
+                throw new FileNotFoundException("Application DLL was not found.", dll);
+            }
             // Refuse reuse, so an old successful capture cannot hide a failed run.
             if (Directory.Exists(output) && Directory.EnumerateFileSystemEntries(output).Any())
+            {
                 throw new InvalidOperationException("Output directory must be new or empty.");
+            }
+
             Directory.CreateDirectory(output);
             ownsOutput = true;
             hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(dll)));
             var resolver = new AssemblyDependencyResolver(dll);
             string dllDirectory = Path.GetDirectoryName(dll)!;
-            AssemblyLoadContext.Default.Resolving += (context, name) => {
+            AssemblyLoadContext.Default.Resolving += (context, name) =>
+            {
                 string? dependency = resolver.ResolveAssemblyToPath(name);
-                if (dependency == null) {
+                if (dependency == null)
+                {
                     string adjacent = Path.Combine(dllDirectory, name.Name + ".dll");
-                    if (File.Exists(adjacent)) dependency = adjacent;
+                    if (File.Exists(adjacent))
+                    {
+                        dependency = adjacent;
+                    }
                 }
                 return dependency == null ? null : context.LoadFromAssemblyPath(dependency);
             };
             app = AssemblyLoadContext.Default.LoadFromAssemblyPath(dll);
-            if (app.GetName().Name != "ProxyBridge") throw new InvalidOperationException("Expected the ProxyBridge assembly.");
+            if (app.GetName().Name != "ProxyBridge")
+            {
+                throw new InvalidOperationException("Expected the ProxyBridge assembly.");
+            }
             // Intentionally never resolve the production guard in this renderer.
             // Dispose may request an observational snapshot; its missing-native
             // status is handled by AppLog. Windows framework DLLs resolve normally.
-            NativeLibrary.SetDllImportResolver(app, (name, _, _) => {
+            NativeLibrary.SetDllImportResolver(app, (name, _, _) =>
+            {
                 if (name.Equals("ProxyGuard.dll", StringComparison.OrdinalIgnoreCase))
+                {
                     throw new DllNotFoundException("Native guard is disabled in the isolated design renderer.");
+                }
+
                 return IntPtr.Zero;
             });
+            if (verify)
+            {
+                if (!Path.IsPathFullyQualified(testHostDll!))
+                {
+                    throw new ArgumentException("--test-host requires an absolute DLL path.");
+                }
+
+                testHostDll = Path.GetFullPath(testHostDll!);
+                if (!File.Exists(testHostDll))
+                {
+                    throw new FileNotFoundException("The explicit test-host DLL was not found.", testHostDll);
+                }
+
+                var testHost = AssemblyLoadContext.Default.LoadFromAssemblyPath(testHostDll);
+                if (testHost.GetName().Name != "ProxyBridge.TestHost")
+                {
+                    throw new InvalidOperationException("Expected the ProxyBridge.TestHost assembly.");
+                }
+
+                var appReference = testHost.GetReferencedAssemblies().Single(reference => reference.Name == "ProxyBridge");
+                if (appReference.FullName != app.GetName().FullName)
+                {
+                    throw new InvalidOperationException("The test host references a different application identity.");
+                }
+
+                monitorSuite = testHost.GetType("ProxyBridge.MonitorUiTests", throwOnError: true)!
+                    .GetMethod("RunAsync", Static)
+                    ?? throw new InvalidOperationException("The test-host monitor suite is missing.");
+                // The default load context must bind the host to this exact loaded app.
+                // Matching names alone would miss an accidental duplicate MainForm type.
+                if (monitorSuite.GetParameters()[0].ParameterType != Type("MainForm"))
+                {
+                    throw new InvalidOperationException("The test host resolved a different MainForm type.");
+                }
+
+                testHostSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(testHostDll)));
+            }
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -87,36 +148,57 @@ internal static class Program
             var tray = (NotifyIcon)Type("MainForm").GetField("tray", Instance)!.GetValue(form)!;
             tray.Visible = false;
             form.Text += " [СИНТЕТИЧЕСКИЙ ПРЕДПРОСМОТР]";
-            form.Shown += async (_, _) => {
-                try {
+            form.Shown += async (_, _) =>
+            {
+                try
+                {
                     await Task.Delay(120);
-                    await RenderAsync(form, args.Contains("--verify", StringComparer.Ordinal),
+                    await RenderAsync(form, verify,
                         args.Contains("--corners-only", StringComparer.Ordinal),
                         args.Contains("--desktop-corners", StringComparer.Ordinal));
-                } catch (Exception exception) {
+                }
+                catch (Exception exception)
+                {
                     error = Explain(exception);
                     Check("render", false, error);
-                } finally {
-                    try { form.Dispose(); }
+                }
+                finally
+                {
+                    try
+                    { form.Dispose(); }
                     catch (Exception exception) { Check("dispose-after-render", false, Explain(exception)); }
                     finally { Application.ExitThread(); }
                 }
             };
             Application.Run(form);
-        } catch (Exception exception) {
+        }
+        catch (Exception exception)
+        {
             error = Explain(exception);
             Check("setup", false, error);
-        } finally {
-            try { form?.Dispose(); }
+        }
+        finally
+        {
+            try
+            { form?.Dispose(); }
             catch (Exception exception) { Check("dispose", false, Explain(exception)); }
-            if (app != null) {
-                try { ((Task)Type("AppLog").GetMethod("StopAsync", Static)!.Invoke(null, null)!).GetAwaiter().GetResult(); }
+            if (app != null)
+            {
+                try
+                { ((Task)Type("AppLog").GetMethod("StopAsync", Static)!.Invoke(null, null)!).GetAwaiter().GetResult(); }
                 catch (Exception exception) { Check("log-flush", false, Explain(exception)); }
             }
-            if (ownsOutput) {
-                var report = new {
-                    schemaVersion = 1, status = failures == 0 ? "PASS" : "FAIL", error,
-                    sourceAssembly = dll, sourceSha256 = hash,
+            if (ownsOutput)
+            {
+                var report = new
+                {
+                    schemaVersion = 1,
+                    status = failures == 0 ? "PASS" : "FAIL",
+                    error,
+                    sourceAssembly = dll,
+                    sourceSha256 = hash,
+                    testHostAssembly = verify ? testHostDll : null,
+                    testHostSha256,
                     capturedAt = DateTimeOffset.Now,
                     source = "Isolated real WinForms rendering with synthetic settings and observeOnly=true; no live connectivity claim",
                     limitations = new[] {
@@ -126,7 +208,10 @@ internal static class Program
                         "Hover/press are injected control events, not an end-to-end hardware pointer test",
                         "Paint-only corner tests deliberately omit OnPaintBackground and start with a magenta sentinel buffer",
                         "Desktop corner sampling is opt-in and skipped if the target is not foreground/unobstructed; no pointer movement is performed"
-                    }, checks = Checks, captures = Captures, cornerEvidence = CornerEvidence
+                    },
+                    checks = Checks,
+                    captures = Captures,
+                    cornerEvidence = CornerEvidence
                 };
                 File.WriteAllText(Path.Combine(output, "preview-report.json"),
                     JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
@@ -144,20 +229,31 @@ internal static class Program
     static Type Type(string name) => app.GetType("ProxyBridge." + name, throwOnError: true)!;
     static string Explain(Exception error)
     {
-        while (error is TargetInvocationException invocation && invocation.InnerException is Exception inner) error = inner;
+        while (error is TargetInvocationException invocation && invocation.InnerException is Exception inner)
+        {
+            error = inner;
+        }
+
         return error.GetType().Name + ": " + error.Message.Replace("synthetic-preview-only", "***", StringComparison.Ordinal);
     }
     static void Check(string name, bool pass, string detail)
     {
         Checks.Add(new { name, status = pass ? "PASS" : "FAIL", detail });
-        if (!pass) failures++;
+        if (!pass)
+        {
+            failures++;
+        }
     }
     static void Skip(string name, string detail) => Checks.Add(new { name, status = "SKIP", detail });
     static IEnumerable<Control> Descendants(Control parent)
     {
-        foreach (Control control in parent.Controls) {
+        foreach (Control control in parent.Controls)
+        {
             yield return control;
-            foreach (var nested in Descendants(control)) yield return nested;
+            foreach (var nested in Descendants(control))
+            {
+                yield return nested;
+            }
         }
     }
     static Control Named(Form form, string name) => Descendants(form).Single(c => c.Name == name);
@@ -172,8 +268,13 @@ internal static class Program
         Check("activity-disabled", !Named(form, "activityLogging").Enabled && !Named(form, "openActivityLog").Enabled,
             "Observe-only activity controls cannot record or open a viewer.");
         await CornerRegressionAsync(form, desktopCorners);
-        if (cornersOnly) return;
-        foreach (var page in new[] { ("overview", "navOverview"), ("proxy", "navProxy"), ("exclusions", "navExclusions"), ("help", "navHelp") }) {
+        if (cornersOnly)
+        {
+            return;
+        }
+
+        foreach (var page in new[] { ("overview", "navOverview"), ("proxy", "navProxy"), ("exclusions", "navExclusions"), ("help", "navHelp") })
+        {
             ((Button)Named(form, page.Item2)).PerformClick();
             await Task.Delay(220);
             Check("navigation-" + page.Item1,
@@ -217,7 +318,8 @@ internal static class Program
         await Task.Delay(180);
         Capture(form, "ui-compact-minimum.png");
         string priorStatus = status.Text;
-        try {
+        try
+        {
             // Exercise long recovery copy through the label only. Never call
             // ShowRecovery or any real protection/network operation.
             status.Text = "Тестовый сбой · блокировка подтверждена · исключений: 2 · службе DNS разрешены запросы к настроенным DNS-серверам";
@@ -228,15 +330,18 @@ internal static class Program
             Check("compact-recovery-text-height", required.Height <= status.ClientSize.Height - status.Padding.Vertical,
                 $"Long synthetic recovery copy needs {required.Height}px; status label offers {status.ClientSize.Height - status.Padding.Vertical}px.");
             Capture(form, "ui-compact-recovery-long.png");
-        } finally { status.Text = priorStatus; }
+        }
+        finally { status.Text = priorStatus; }
         Call(form, "SetCompactLayout", false);
         Call(form, "NavigateTo", "overview");
-        if (verify) {
-            // Existing scheduler tests use only explicit synthetic callbacks.
-            // Program.VerifyNavigation is deliberately not reused: it writes
-            // capture files into AppContext.BaseDirectory rather than --out.
+        if (verify)
+        {
+            // The explicitly selected test assembly shares the loaded MainForm type.
+            // Its scheduler suite uses only synthetic callbacks and writes captures
+            // through this renderer, so all images stay under --out.
             Action<string> capture = name => Capture(form, "verify-" + name);
-            var task = (Task)Type("MonitorUiTests").GetMethod("RunAsync", Static)!.Invoke(null, [form, capture])!;
+            var task = (Task)(monitorSuite ?? throw new InvalidOperationException("Test-host suite was not loaded."))
+                .Invoke(null, [form, capture])!;
             await task.WaitAsync(TimeSpan.FromSeconds(60));
             Check("synthetic-monitor-suite", true, "Existing MonitorUiTests completed without live operations.");
         }
@@ -244,15 +349,21 @@ internal static class Program
 
     static async Task CornerRegressionAsync(Form form, bool desktop)
     {
-        if (SystemInformation.HighContrast) {
+        if (SystemInformation.HighContrast)
+        {
             Skip("corner-regression", "Windows High Contrast intentionally uses rectangular buttons; rounded-corner expectations do not apply.");
             return;
         }
         var buttons = new[] { "navOverview", "navProxy", "navExclusions", "navHelp" }
             .Select(name => (Button)Named(form, name)).ToArray();
-        if (!desktop) Skip("desktop-corners", "Run with --desktop-corners on an unobstructed test desktop for on-screen pixels; paint-only regression still runs.");
+        if (!desktop)
+        {
+            Skip("desktop-corners", "Run with --desktop-corners on an unobstructed test desktop for on-screen pixels; paint-only regression still runs.");
+        }
+
         Call(form, "NavigateTo", "overview");
-        for (int cycle = 0; cycle < 12; cycle++) {
+        for (int cycle = 0; cycle < 12; cycle++)
+        {
             var button = buttons[cycle % buttons.Length];
             var next = buttons[(cycle + 1) % buttons.Length];
             next.PerformClick(); // Begin with the tested button unselected.
@@ -271,9 +382,13 @@ internal static class Program
                 await Task.Delay(delay);
                 // Flush pending normal invalidation only. Do not Refresh the form,
                 // call DrawToBitmap, or explicitly erase the background here.
-                button.Update(); next.Update();
+                button.Update();
+                next.Update();
                 string name = $"corner-{cycle:00}-{phase}";
-                if (desktop) CaptureDesktopCorners(form, button, name + "-desktop");
+                if (desktop)
+                {
+                    CaptureDesktopCorners(form, button, name + "-desktop");
+                }
                 // Desktop sampling precedes this detached paint-only probe.
                 CapturePaintOnlyCorners(form, button, name + "-paint-only");
             }
@@ -284,7 +399,13 @@ internal static class Program
     static Color OpaqueParentBackground(Control control)
     {
         for (Control? parent = control.Parent; parent != null; parent = parent.Parent)
-            if (parent.BackColor.A == 255) return parent.BackColor;
+        {
+            if (parent.BackColor.A == 255)
+            {
+                return parent.BackColor;
+            }
+        }
+
         throw new InvalidOperationException("Corner test requires an opaque ancestor background.");
     }
 
@@ -292,19 +413,27 @@ internal static class Program
     {
         var result = new List<Point>();
         foreach (int x in new[] { 0, 1, size.Width - 2, size.Width - 1 })
-            foreach (int y in new[] { 0, 1, size.Height - 2, size.Height - 1 }) result.Add(new Point(x, y));
+        {
+            foreach (int y in new[] { 0, 1, size.Height - 2, size.Height - 1 })
+            {
+                result.Add(new Point(x, y));
+            }
+        }
+
         return result.ToArray();
     }
 
     static void CapturePaintOnlyCorners(Form form, Button button, string name)
     {
         int radius = (int)(button.GetType().GetProperty("CornerRadius", Instance)?.GetValue(button) ?? 8);
-        if (radius * button.DeviceDpi / 96f < 8 || button.Width < 12 || button.Height < 12) {
+        if (radius * button.DeviceDpi / 96f < 8 || button.Width < 12 || button.Height < 12)
+        {
             Skip(name, "Rounded button is too small for safely exterior 2x2 corner samples.");
             return;
         }
         using var bitmap = new Bitmap(button.ClientSize.Width, button.ClientSize.Height);
-        using (var graphics = Graphics.FromImage(bitmap)) {
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
             graphics.Clear(Color.Magenta);
             using var paint = new PaintEventArgs(graphics, button.ClientRectangle);
             // Key regression contract: a paint pass must replace stale corner
@@ -318,7 +447,8 @@ internal static class Program
     {
         Rectangle screenBounds = button.RectangleToScreen(button.ClientRectangle);
         if (!form.Visible || form.WindowState != FormWindowState.Normal || GetForegroundWindow() != form.Handle ||
-            !SystemInformation.VirtualScreen.Contains(screenBounds)) {
+            !SystemInformation.VirtualScreen.Contains(screenBounds))
+        {
             Skip(name, "Target is not a fully on-screen foreground test window; desktop pixels are not trustworthy.");
             return;
         }
@@ -326,22 +456,33 @@ internal static class Program
         // copying only this button's pixels. No screen outside the target is saved.
         var probes = CornerPoints(button.ClientSize).ToList();
         for (int y = 0; y < button.Height; y += 6)
-            for (int x = 0; x < button.Width; x += 6) probes.Add(new Point(x, y));
+        {
+            for (int x = 0; x < button.Width; x += 6)
+            {
+                probes.Add(new Point(x, y));
+            }
+        }
+
         bool Owned(Point point) => GetAncestor(WindowFromPoint(new Point(screenBounds.Left + point.X,
             screenBounds.Top + point.Y)), 2) == form.Handle;
-        if (probes.Any(point => !Owned(point))) {
+        if (probes.Any(point => !Owned(point)))
+        {
             Skip(name, "Target pixels are obscured by another window; no desktop capture saved.");
             return;
         }
         using var bitmap = new Bitmap(button.ClientSize.Width, button.ClientSize.Height);
-        try {
+        try
+        {
             using var graphics = Graphics.FromImage(bitmap);
             graphics.CopyFromScreen(screenBounds.Location, Point.Empty, screenBounds.Size, CopyPixelOperation.SourceCopy);
-        } catch (System.ComponentModel.Win32Exception error) {
+        }
+        catch (System.ComponentModel.Win32Exception error)
+        {
             Skip(name, "Desktop pixel capture unavailable: " + error.NativeErrorCode);
             return;
         }
-        if (GetForegroundWindow() != form.Handle || probes.Any(point => !Owned(point))) {
+        if (GetForegroundWindow() != form.Handle || probes.Any(point => !Owned(point)))
+        {
             Skip(name, "Window ownership changed during capture; pixels discarded.");
             return;
         }
@@ -351,7 +492,8 @@ internal static class Program
     static void EvaluateCorners(Form form, Button button, Bitmap bitmap, string name, string source, int tolerance)
     {
         Color expected = OpaqueParentBackground(button);
-        var samples = CornerPoints(bitmap.Size).Select(point => {
+        var samples = CornerPoints(bitmap.Size).Select(point =>
+        {
             Color actual = bitmap.GetPixel(point.X, point.Y);
             int delta = Math.Max(Math.Abs(actual.R - expected.R), Math.Max(Math.Abs(actual.G - expected.G), Math.Abs(actual.B - expected.B)));
             return new { point.X, point.Y, actual = $"#{actual.R:X2}{actual.G:X2}{actual.B:X2}", delta };
@@ -360,12 +502,28 @@ internal static class Program
         bitmap.Save(Path.Combine(output, file));
         bool pass = samples.All(sample => sample.delta <= tolerance);
         Check(name, pass, $"All 16 exterior-corner pixels match opaque parent #{expected.R:X2}{expected.G:X2}{expected.B:X2}; tolerance {tolerance}, maximum delta {samples.Max(sample => sample.delta)}.");
-        CornerEvidence.Add(new { file, source, button = button.Name,
+        CornerEvidence.Add(new
+        {
+            file,
+            source,
+            button = button.Name,
             selected = button.GetType().GetProperty("Selected", Instance)?.GetValue(button),
-            expected = $"#{expected.R:X2}{expected.G:X2}{expected.B:X2}", tolerance, samples });
-        Captures.Add(new { file, source, capturedAt = DateTimeOffset.Now, width = bitmap.Width, height = bitmap.Height,
-            dpi = button.DeviceDpi, page = Type("MainForm").GetProperty("CurrentPage", Instance)!.GetValue(form),
-            compact = false, controls = Array.Empty<object>() });
+            expected = $"#{expected.R:X2}{expected.G:X2}{expected.B:X2}",
+            tolerance,
+            samples
+        });
+        Captures.Add(new
+        {
+            file,
+            source,
+            capturedAt = DateTimeOffset.Now,
+            width = bitmap.Width,
+            height = bitmap.Height,
+            dpi = button.DeviceDpi,
+            page = Type("MainForm").GetProperty("CurrentPage", Instance)!.GetValue(form),
+            compact = false,
+            controls = Array.Empty<object>()
+        });
     }
 
     static void Capture(Form form, string name)
@@ -377,16 +535,22 @@ internal static class Program
         bitmap.Save(Path.Combine(output, name));
         var visible = Descendants(form).Where(control => control.Visible).ToArray();
         var buttons = visible.OfType<Button>().ToArray();
-        foreach (var button in buttons) {
+        foreach (var button in buttons)
+        {
             string checkName = name + ":" + button.Name;
             Check(checkName + ":nonzero-bounds", button.Width > 0 && button.Height > 0,
                 "Visible button has nonzero dimensions.");
             var screenBounds = button.RectangleToScreen(button.ClientRectangle);
             bool clipped = false, scrollClipped = false;
             string clippingParent = "";
-            for (Control? ancestor = button.Parent; ancestor != null; ancestor = ancestor.Parent) {
+            for (Control? ancestor = button.Parent; ancestor != null; ancestor = ancestor.Parent)
+            {
                 var localBounds = ancestor.RectangleToClient(screenBounds);
-                if (ancestor.ClientRectangle.Contains(localBounds)) continue;
+                if (ancestor.ClientRectangle.Contains(localBounds))
+                {
+                    continue;
+                }
+
                 clippingParent = ancestor.Name.Length == 0 ? ancestor.GetType().Name : ancestor.Name;
                 scrollClipped = ancestor is ScrollableControl { AutoScroll: true };
                 clipped = !scrollClipped;
@@ -395,15 +559,24 @@ internal static class Program
                 break;
             }
             if (scrollClipped)
-                Checks.Add(new { name = checkName + ":ancestor-bounds", status = "SKIP",
-                    detail = "Content extends beyond the scroll viewport: " + clippingParent });
+            {
+                Checks.Add(new
+                {
+                    name = checkName + ":ancestor-bounds",
+                    status = "SKIP",
+                    detail = "Content extends beyond the scroll viewport: " + clippingParent
+                });
+            }
             else
+            {
                 Check(checkName + ":ancestor-bounds", !clipped,
                     clipped ? "Button is clipped by ancestor: " + clippingParent : "Button fits every ancestor client rectangle.");
+            }
             // These multiline actions retain normal Button sizing semantics;
             // navigation has custom icon/marker insets, so this API is not a
             // reliable text measurement for navigation and is not used there.
-            if (button.Name is "block" or "release") {
+            if (button.Name is "block" or "release")
+            {
                 Size preferred = button.GetPreferredSize(new Size(button.Width, 0));
                 Check(checkName + ":text-height", preferred.Height <= button.Height,
                     $"Required button height {preferred.Height}; available {button.Height}.");
@@ -411,16 +584,27 @@ internal static class Program
         }
         var journal = visible.SingleOrDefault(control => control.Name == "startupLog");
         if (journal != null)
+        {
             Check(name + ":journal-readable-height", journal.ClientSize.Height >= journal.Font.Height * 3,
                 $"Journal shows at least three lines: available {journal.ClientSize.Height}, required {journal.Font.Height * 3}.");
-        Captures.Add(new {
-            file = name, capturedAt = DateTimeOffset.Now, width = form.Width, height = form.Height, dpi = form.DeviceDpi,
+        }
+
+        Captures.Add(new
+        {
+            file = name,
+            capturedAt = DateTimeOffset.Now,
+            width = form.Width,
+            height = form.Height,
+            dpi = form.DeviceDpi,
             page = Type("MainForm").GetProperty("CurrentPage", Instance)!.GetValue(form),
             compact = Type("MainForm").GetProperty("IsCompact", Instance)!.GetValue(form),
-            controls = visible.Select(control => new {
-                name = control.Name, type = control.GetType().Name,
+            controls = visible.Select(control => new
+            {
+                name = control.Name,
+                type = control.GetType().Name,
                 bounds = new { control.Left, control.Top, control.Width, control.Height },
-                control.Enabled, control.Focused,
+                control.Enabled,
+                control.Focused,
                 // Do not serialize field contents, even though this run uses only sample data.
                 text = control is TextBoxBase ? "[field contents omitted]" : control.Text
             }).ToArray()

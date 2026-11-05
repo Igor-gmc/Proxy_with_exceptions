@@ -11,7 +11,10 @@ internal static class ActivityMonitorTests
     static readonly TimeSpan Deadline = TimeSpan.FromSeconds(4);
     static void Require(bool value, string message)
     {
-        if (!value) throw new InvalidOperationException(message);
+        if (!value)
+        {
+            throw new InvalidOperationException(message);
+        }
     }
     static JsonElement Parse(string value)
     {
@@ -29,7 +32,8 @@ internal static class ActivityMonitorTests
 
     public static async Task RunAsync(Func<string, Func<string, Task>, Task> test)
     {
-        await test("Metadata remains one JSON record and masks complete and boundary-crossing secrets", _ => Done(() => {
+        await test("Metadata remains one JSON record and masks complete and boundary-crossing secrets", _ => Done(() =>
+        {
             const string secret = "qa-activity-boundary-secret-7428";
             AppLog.RegisterSecret(secret);
             var journal = new ActivityJournal((_, _) => null);
@@ -47,7 +51,8 @@ internal static class ActivityMonitorTests
                 "Sensitive nonmetadata field entered the activity record.");
         }));
 
-        await test("Delivered PID reuse separates instances and ignores an old delayed stop", _ => Done(() => {
+        await test("Delivered PID reuse separates instances and ignores an old delayed stop", _ => Done(() =>
+        {
             var journal = new ActivityJournal((_, _) => null);
             var a = Accept(journal, Event("process.start", second: 1) with { ImageName = "first.exe" });
             Accept(journal, Event("process.stop", second: 2));
@@ -59,7 +64,8 @@ internal static class ActivityMonitorTests
             Require(Unknown(Accept(journal, Event("tcp.connect", second: 2))), "Old event received the new PID owner's name.");
         }));
 
-        await test("Reported event gap invalidates attribution before a reused PID is resolved", _ => Done(() => {
+        await test("Reported event gap invalidates attribution before a reused PID is resolved", _ => Done(() =>
+        {
             ActivityProcessIdentity? live = new(42, Epoch, "first.exe");
             var journal = new ActivityJournal((_, _) => live);
             Require(Accept(journal, Event("tcp.connect", second: 1)).GetProperty("image").GetString() == "first.exe",
@@ -74,7 +80,8 @@ internal static class ActivityMonitorTests
             Require(late.GetProperty("image").GetString() != "second.exe", "Late event was attributed to a later process.");
         }));
 
-        await test("Delayed start cannot resurrect an instance already known to have stopped", _ => Done(() => {
+        await test("Delayed start cannot resurrect an instance already known to have stopped", _ => Done(() =>
+        {
             var journal = new ActivityJournal((_, _) => null);
             Accept(journal, Event("process.start", second: 1) with { ImageName = "stopped.exe" });
             Accept(journal, Event("process.stop", second: 2));
@@ -89,7 +96,8 @@ internal static class ActivityMonitorTests
                 "Old tombstone prevented a legitimate later process start.");
         }));
 
-        await test("Future, wrong-PID and unavailable identities stay unknown", _ => Done(() => {
+        await test("Future, wrong-PID and unavailable identities stay unknown", _ => Done(() =>
+        {
             var future = new ActivityJournal((pid, _) => new(pid, Epoch.AddSeconds(5), "future.exe"));
             Require(Unknown(Accept(future, Event("tcp.connect"))), "A future process was attributed backwards.");
             var wrong = new ActivityJournal((_, _) => new(99, Epoch, "wrong.exe"));
@@ -99,10 +107,17 @@ internal static class ActivityMonitorTests
             Require(Unknown(Accept(unavailable, Event("tcp.connect", pid: 0))), "Unspecified PID received an identity.");
         }));
 
-        await test("Traffic aggregates directional bytes and bounds distinct flows", _ => Done(() => {
+        await test("Traffic aggregates directional bytes and bounds distinct flows", _ => Done(() =>
+        {
             var journal = new ActivityJournal((_, _) => null, maxFlows: 2);
-            ActivityEvent Flow(string kind, string remote, long bytes, int second) => Event(kind, second: second) with {
-                Protocol = "UDP", LocalAddress = "::1", LocalPort = 1200, RemoteAddress = remote, RemotePort = 1300, Bytes = bytes
+            ActivityEvent Flow(string kind, string remote, long bytes, int second) => Event(kind, second: second) with
+            {
+                Protocol = "UDP",
+                LocalAddress = "::1",
+                LocalPort = 1200,
+                RemoteAddress = remote,
+                RemotePort = 1300,
+                Bytes = bytes
             };
             Require(!journal.Accept(Flow("udp.send", "::1", 10, 1)).Any(), "Traffic event bypassed aggregation.");
             journal.Accept(Flow("udp.receive", "::1", 20, 2)).ToArray();
@@ -119,7 +134,8 @@ internal static class ActivityMonitorTests
             Require(!journal.FlushFlows().Any(), "Flushed flows were written twice.");
         }));
 
-        await test("Unflushed flows retain their original process instance across PID reuse", _ => Done(() => {
+        await test("Unflushed flows retain their original process instance across PID reuse", _ => Done(() =>
+        {
             var journal = new ActivityJournal((_, _) => null);
             Accept(journal, Event("process.start", second: 1) with { ImageName = "first.exe" });
             var send = Event("tcp.send", second: 2) with { Protocol = "TCP", RemoteAddress = "127.0.0.1", RemotePort = 443, Bytes = 12 };
@@ -134,18 +150,21 @@ internal static class ActivityMonitorTests
                 "Old flow was reassigned to the current PID owner.");
         }));
 
-        await test("Bounded producer remains nonblocking while the writer is blocked and reports drops", async _ => {
+        await test("Bounded producer remains nonblocking while the writer is blocked and reports drops", async _ =>
+        {
             var source = new FakeSource();
             using var sink = new RecordingSink(blockFirst: true);
             using var monitor = Monitor(source, sink, capacity: 3, batch: 1);
-            try {
+            try
+            {
                 await monitor.StartAsync().WaitAsync(Deadline);
                 await sink.Entered.Task.WaitAsync(Deadline);
                 // Complete producer independently: if callbacks block on file I/O,
                 // this bounded wait fails and finally still releases the writer.
-                await Task.Run(() => { for (int i = 0; i < 12; i++) source.Emit(Event("tcp.connect", pid: i + 1)); }).WaitAsync(Deadline);
+                await Task.Run(() => { for (int i = 0; i < 12; i++) { source.Emit(Event("tcp.connect", pid: i + 1)); } }).WaitAsync(Deadline);
                 Require(monitor.Counters.Accepted == 3 && monitor.Counters.Dropped == 9, "Bounded queue accounting differs from burst size.");
-            } finally { sink.Release.Set(); }
+            }
+            finally { sink.Release.Set(); }
             await monitor.StopAsync().WaitAsync(Deadline);
             var records = sink.Records.Select(Parse).ToArray();
             Require(records.Count(r => r.GetProperty("kind").GetString() == "tcp.connect") == 3, "Accepted events were lost or duplicated on drain.");
@@ -154,11 +173,13 @@ internal static class ActivityMonitorTests
             Require(monitor.Counters.Written == records.Length, "Written counter differs from successful sink records.");
         });
 
-        await test("Stop drains events emitted by source Stop and flushes pending UDP traffic", async _ => {
+        await test("Stop drains events emitted by source Stop and flushes pending UDP traffic", async _ =>
+        {
             var source = new FakeSource();
             using var sink = new RecordingSink();
             using var monitor = Monitor(source, sink, batch: 64);
-            source.Stopping = () => {
+            source.Stopping = () =>
+            {
                 source.Emit(Event("udp.send") with { Protocol = "UDP", RemoteAddress = "127.0.0.1", RemotePort = 80, Bytes = 17 });
                 source.Emit(Event("process.stop", second: 1));
             };
@@ -176,9 +197,10 @@ internal static class ActivityMonitorTests
             Require(monitor.Counters.Accepted == accepted && source.Stops == 1, "Stopped source remained subscribed or Stop was duplicated.");
         });
 
-        await test("Monitor sends multi-record bounded batches rather than one durable write per event", async _ => {
+        await test("Monitor sends multi-record bounded batches rather than one durable write per event", async _ =>
+        {
             var source = new FakeSource();
-            source.Starting = () => { for (int i = 0; i < 11; i++) source.Emit(Event("tcp.connect", i + 1)); };
+            source.Starting = () => { for (int i = 0; i < 11; i++) { source.Emit(Event("tcp.connect", i + 1)); } };
             using var sink = new RecordingSink();
             using var monitor = Monitor(source, sink, batch: 4);
             await monitor.StartAsync().WaitAsync(Deadline);
@@ -188,11 +210,13 @@ internal static class ActivityMonitorTests
                 "Batching dropped a process event.");
         });
 
-        await test("Dispose returns within its UI budget while blocked writer cleanup continues safely", async _ => {
+        await test("Dispose returns within its UI budget while blocked writer cleanup continues safely", async _ =>
+        {
             var source = new FakeSource();
             using var sink = new RecordingSink(blockFirst: true);
             using var monitor = Monitor(source, sink, batch: 1);
-            try {
+            try
+            {
                 await monitor.StartAsync().WaitAsync(Deadline);
                 await sink.Entered.Task.WaitAsync(Deadline);
                 var elapsed = System.Diagnostics.Stopwatch.StartNew();
@@ -201,7 +225,8 @@ internal static class ActivityMonitorTests
                 Require(monitor.LastError?.Contains(nameof(TimeoutException), StringComparison.Ordinal) == true,
                     "Bounded shutdown did not report incomplete background drain.");
                 Require(!sink.Release.IsSet, "Dispose unblocked or disposed the test-owned writer while it was still active.");
-            } finally { sink.Release.Set(); }
+            }
+            finally { sink.Release.Set(); }
             await monitor.StopAsync().WaitAsync(Deadline);
             Require(!monitor.Running && source.Stops == 1 && source.Disposals == 1,
                 "Background cleanup duplicated or lost source ownership.");
@@ -211,14 +236,19 @@ internal static class ActivityMonitorTests
             Require(source.Starts == 1 && !monitor.Running, "Disposed monitor restarted a competing writer.");
         });
 
-        await test("File rotation preserves complete bounded UTF-8 JSON and new records", directory => Done(() => {
+        await test("File rotation preserves complete bounded UTF-8 JSON and new records", directory => Done(() =>
+        {
             string path = Path.Combine(directory, "activity.log");
             using var sink = new ActivityFileSink(path, 1024);
             sink.WriteBatch([Record("old", 400)]);
             sink.WriteBatch([Record("recent", 600), Record("last", 100)]);
             string[] records = ReadRecords(path);
             Require(new FileInfo(path).Length <= 1024, "Rotated file exceeds its cap.");
-            foreach (string record in records) Parse(record);
+            foreach (string record in records)
+            {
+                Parse(record);
+            }
+
             Require(records.Any(r => Parse(r).GetProperty("kind").GetString() == "monitor.log-reset"), "Rollover was silent.");
             Require(!string.Join("", records).Contains("\"marker\":\"old\""), "Old file contents survived rollover.");
             Require(records.Any(r => r.Contains("\"marker\":\"last\"")), "Newest record disappeared during rotation.");
@@ -227,7 +257,8 @@ internal static class ActivityMonitorTests
             Require(ReadRecords(path).Any(r => r.Contains("reopened")), "New sink did not append.");
         }));
 
-        await test("Oversized Unicode record is explicitly omitted without invalid JSON or a larger file", directory => Done(() => {
+        await test("Oversized Unicode record is explicitly omitted without invalid JSON or a larger file", directory => Done(() =>
+        {
             string path = Path.Combine(directory, "activity.log");
             using var sink = new ActivityFileSink(path, 512);
             string huge = JsonSerializer.Serialize(new { kind = "test", text = string.Concat(Enumerable.Repeat("ёж🦔", 5000)) });
@@ -238,17 +269,20 @@ internal static class ActivityMonitorTests
             Require(records.Any(r => r.TryGetProperty("marker", out var m) && m.GetString() == "after"), "Subsequent valid record was lost.");
         }));
 
-        await test("File sink exposes an I/O failure for monitor isolation instead of swallowing it", directory => Done(() => {
+        await test("File sink exposes an I/O failure for monitor isolation instead of swallowing it", directory => Done(() =>
+        {
             string path = Path.Combine(directory, "occupied");
             Directory.CreateDirectory(path);
             using var sink = new ActivityFileSink(path);
             bool failed = false;
-            try { sink.WriteBatch([Record("cannot-write")]); }
+            try
+            { sink.WriteBatch([Record("cannot-write")]); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { failed = true; }
             Require(failed, "File sink claimed success when no file could be written.");
         }));
 
-        await test("Source start failure is contained and never reports Running", async _ => {
+        await test("Source start failure is contained and never reports Running", async _ =>
+        {
             var source = new FakeSource { Starting = () => throw new IOException("qa-private-failure-detail") };
             using var sink = new RecordingSink();
             using var monitor = Monitor(source, sink);
@@ -260,12 +294,13 @@ internal static class ActivityMonitorTests
             await monitor.StopAsync().WaitAsync(Deadline);
         });
 
-        await test("Writer failure is isolated, counted only after successful writes, and stops the source", async _ => {
+        await test("Writer failure is isolated, counted only after successful writes, and stops the source", async _ =>
+        {
             var source = new FakeSource();
             using var sink = new RecordingSink { Failure = new IOException("qa-private-writer-detail") };
             using var monitor = Monitor(source, sink, batch: 1);
             var fault = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            monitor.StateChanged += () => { if (monitor.LastError != null) fault.TrySetResult(); };
+            monitor.StateChanged += () => { if (monitor.LastError != null) { fault.TrySetResult(); } };
             await monitor.StartAsync().WaitAsync(Deadline);
             await fault.Task.WaitAsync(Deadline);
             await monitor.StopAsync().WaitAsync(Deadline);
@@ -274,7 +309,8 @@ internal static class ActivityMonitorTests
             Require(monitor.LastError != null && !monitor.LastError.Contains("qa-private"), "Writer error detail leaked.");
         });
 
-        await test("Source fault and stop failure are contained and do not escape lifecycle calls", async _ => {
+        await test("Source fault and stop failure are contained and do not escape lifecycle calls", async _ =>
+        {
             var source = new FakeSource { Stopping = () => throw new IOException("qa-stop-private") };
             using var sink = new RecordingSink();
             using var monitor = Monitor(source, sink);
@@ -286,7 +322,8 @@ internal static class ActivityMonitorTests
             Require(source.Disposals == 1, "Stop failure prevented source disposal.");
         });
 
-        await test("Trace loss counters are included without claiming complete coverage", async _ => {
+        await test("Trace loss counters are included without claiming complete coverage", async _ =>
+        {
             var source = new FakeSource { Stats = new(7, 3, 2, true, "test:loss") };
             using var sink = new RecordingSink();
             using var monitor = Monitor(source, sink);
@@ -298,7 +335,8 @@ internal static class ActivityMonitorTests
                 trace.GetProperty("CallbackErrors").GetInt64() == 2, "ETW gaps were omitted from the journal.");
         });
 
-        await test("Old settings default metadata logging on and explicit off survives serialization", _ => Done(() => {
+        await test("Old settings default metadata logging on and explicit off survives serialization", _ => Done(() =>
+        {
             const string old = "{\"Host\":\"127.0.0.1\",\"Port\":1080,\"Username\":\"\",\"Password\":\"\",\"Protocol\":\"socks\"}";
             var settings = JsonSerializer.Deserialize<Settings>(old)!;
             Require(settings.ActivityLoggingEnabled, "Old settings did not adopt the approved default.");
@@ -338,16 +376,25 @@ internal static class ActivityMonitorTests
         public readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Exception? Failure;
         public string FilePath => "synthetic-activity.log";
-        public string[] Records { get { lock (gate) return records.ToArray(); } }
-        public int[] BatchSizes { get { lock (gate) return batchSizes.ToArray(); } }
+        public string[] Records { get { lock (gate) { return records.ToArray(); } } }
+        public int[] BatchSizes { get { lock (gate) { return batchSizes.ToArray(); } } }
         public void WriteBatch(IReadOnlyList<string> values)
         {
-            if (Interlocked.Increment(ref calls) == 1) {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
                 Entered.TrySetResult();
-                if (!Release.Wait(TimeSpan.FromSeconds(6))) throw new TimeoutException("Test gate was not released.");
+                if (!Release.Wait(TimeSpan.FromSeconds(6)))
+                {
+                    throw new TimeoutException("Test gate was not released.");
+                }
             }
-            if (Failure != null) throw Failure;
-            lock (gate) { batchSizes.Add(values.Count); records.AddRange(values); }
+            if (Failure != null)
+            {
+                throw Failure;
+            }
+
+            lock (gate)
+            { batchSizes.Add(values.Count); records.AddRange(values); }
         }
         // Test-owned wait handles remain alive until all monitor callbacks have
         // drained. Idempotent disposal also permits supplied-sink lifecycle tests.

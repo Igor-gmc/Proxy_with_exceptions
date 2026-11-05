@@ -1,0 +1,77 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "remote-dns",
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "path": "/dns-query",
+        "detour": "proxy",
+        "tls": {
+          "enabled": true,
+          "server_name": "cloudflare-dns.com"
+        }
+      }
+    ],
+    "final": "remote-dns",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun",
+      "interface_name": "ProxyBridge-TUN",
+      "address": [
+        "172.29.231.1/30",
+        "fdfe:dcba:7231::1/126"
+      ],
+      "mtu": 1500,
+      "auto_route": true,
+      "strict_route": true,
+      "dns_mode": "hijack",
+      "route_exclude_address": [
+        "192.0.2.10/32"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "http",
+      "tag": "proxy",
+      "server": "192.0.2.10",
+      "server_port": 8080,
+      "username": "synthetic-user",
+      "password": "synthetic-password"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "final": "proxy",
+    "rules": [
+      {
+        "port": 53,
+        "action": "hijack-dns"
+      },
+      {
+        "process_path": [
+          "C:\\QA Apps\\browser.exe"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "network": "udp",
+        "action": "reject"
+      }
+    ]
+  }
+}

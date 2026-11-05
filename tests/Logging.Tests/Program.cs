@@ -11,14 +11,19 @@ int failures = 0;
 
 void Require(bool condition, string reason)
 {
-    if (!condition) throw new InvalidOperationException(reason);
+    if (!condition)
+    {
+        throw new InvalidOperationException(reason);
+    }
 }
 void Test(string name, Action<string> action)
 {
     string directory = Path.Combine(output, "case-" + report.Count.ToString("D2"));
     Directory.CreateDirectory(directory);
-    try { action(Path.Combine(directory, "ProxyBridge.log")); report.Add("PASS: " + name); }
-    catch (Exception error) {
+    try
+    { action(Path.Combine(directory, "ProxyBridge.log")); report.Add("PASS: " + name); }
+    catch (Exception error)
+    {
         failures++;
         // Exception messages may contain a synthetic secret or path: retain type only.
         report.Add("FAIL: " + name + " (" + error.GetType().Name + ")");
@@ -34,7 +39,8 @@ void Seed(string path, long length, string marker)
     stream.SetLength(length);
 }
 
-Test("UTF-8 text, date, timezone and process ID survive a fresh file", path => {
+Test("UTF-8 text, date, timezone and process ID survive a fresh file", path =>
+{
     var writer = new BoundedLogFile(path);
     Require(writer.Write("Проверка журнала: ёж 🦔"), "Write failed");
     string text = Read(path);
@@ -45,20 +51,23 @@ Test("UTF-8 text, date, timezone and process ID survive a fresh file", path => {
     Require(text.EndsWith('\n'), "Missing line ending");
 });
 
-Test("New logger instance appends to an existing session", path => {
+Test("New logger instance appends to an existing session", path =>
+{
     Require(new BoundedLogFile(path).Write("FIRST-SESSION-SENTINEL"), "Initial write failed");
     Require(new BoundedLogFile(path).Write("SECOND-SESSION-SENTINEL"), "Restart write failed");
     string text = Read(path);
     Require(text.Contains("FIRST-SESSION-SENTINEL") && text.Contains("SECOND-SESSION-SENTINEL"), "Session was lost");
 });
 
-Test("Production 25 MB file appends below its limit and overwrites on overflow", path => {
+Test("Production 25 MB file appends below its limit and overwrites on overflow", path =>
+{
     const string old = "PREVIOUS-CONTENTS-SENTINEL";
     Seed(path, productionLimit - 4096, old);
     var writer = new BoundedLogFile(path);
     Require(writer.Write("BELOW-LIMIT-SENTINEL"), "Below-limit write failed");
     Require(new FileInfo(path).Length > productionLimit - 4096 && new FileInfo(path).Length <= productionLimit, "Incorrect append length");
-    using (var input = File.OpenRead(path)) {
+    using (var input = File.OpenRead(path))
+    {
         byte[] prefix = new byte[Encoding.UTF8.GetByteCount(old)];
         input.ReadExactly(prefix);
         Require(Encoding.UTF8.GetString(prefix) == old, "Premature overwrite");
@@ -71,7 +80,8 @@ Test("Production 25 MB file appends below its limit and overwrites on overflow",
     Require(Directory.GetFiles(Path.GetDirectoryName(path)!).Length == 1, "Unexpected archive file");
 });
 
-Test("Existing oversized file is replaced before the next record", path => {
+Test("Existing oversized file is replaced before the next record", path =>
+{
     Seed(path, productionLimit + 1, "OVERSIZED-OLD-SENTINEL");
     Require(new BoundedLogFile(path).Write("OVERSIZED-REPLACED-SENTINEL"), "Write failed");
     Require(new FileInfo(path).Length <= productionLimit, "Oversized file retained");
@@ -79,7 +89,8 @@ Test("Existing oversized file is replaced before the next record", path => {
     Require(!text.Contains("OVERSIZED-OLD-SENTINEL") && text.Contains("OVERSIZED-REPLACED-SENTINEL"), "Wrong contents after overwrite");
 });
 
-Test("Huge multi-byte record is bounded and remains valid UTF-8", path => {
+Test("Huge multi-byte record is bounded and remains valid UTF-8", path =>
+{
     string message = "HUGE-ENTRY-START " + string.Concat(Enumerable.Repeat("я🦔", 500_000));
     Require(new BoundedLogFile(path).Write(message), "Huge write failed");
     Require(new FileInfo(path).Length <= 65_536, "Entry exceeds 64 KiB");
@@ -88,7 +99,8 @@ Test("Huge multi-byte record is bounded and remains valid UTF-8", path => {
     Require(!text.Contains('\uFFFD'), "UTF-8 was split or replaced");
 });
 
-Test("Small configured limit also bounds an oversized Unicode entry", path => {
+Test("Small configured limit also bounds an oversized Unicode entry", path =>
+{
     var writer = new BoundedLogFile(path, 4096);
     Require(writer.Write(string.Concat(Enumerable.Repeat("Проверка 🦔 ", 20_000))), "Write failed");
     Require(new FileInfo(path).Length <= 4096, "Configured limit exceeded");
@@ -97,16 +109,21 @@ Test("Small configured limit also bounds an oversized Unicode entry", path => {
     Require(new FileInfo(path).Length <= 4096 && Read(path).Contains("NEXT-RECORD-SENTINEL"), "Limit not maintained");
 });
 
-Test("Concurrent writes retain each complete record exactly once", path => {
+Test("Concurrent writes retain each complete record exactly once", path =>
+{
     var writer = new BoundedLogFile(path);
     Parallel.For(0, 400, index => Require(writer.Write($"RECORD-{index:D4}-END"), "Concurrent write failed"));
     string text = Read(path);
     for (int index = 0; index < 400; index++)
+    {
         Require(Regex.Matches(text, $"RECORD-{index:D4}-END").Count == 1, "Missing or duplicate record");
+    }
+
     Require(text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 400, "Interleaved records");
 });
 
-Test("Current, previous and overlapping secrets are completely masked", path => {
+Test("Current, previous and overlapping secrets are completely masked", path =>
+{
     var writer = new BoundedLogFile(path);
     writer.RegisterSecret(null);
     writer.RegisterSecret("");
@@ -123,7 +140,8 @@ Test("Current, previous and overlapping secrets are completely masked", path => 
     Require(text.Contains("***"), "Mask missing");
 });
 
-Test("URL-encoded and JSON-escaped secrets are masked", path => {
+Test("URL-encoded and JSON-escaped secrets are masked", path =>
+{
     var writer = new BoundedLogFile(path);
     const string synthetic = "qa \"юникод\"/\\secret";
     writer.RegisterSecret(synthetic);
@@ -135,7 +153,8 @@ Test("URL-encoded and JSON-escaped secrets are masked", path => {
     Require(text.Contains("raw=*** url=*** json=***"), "Encoded variants not completely masked");
 });
 
-Test("UI extra secrets mask both overlap orders without retaining partial input", _ => {
+Test("UI extra secrets mask both overlap orders without retaining partial input", _ =>
+{
     const string shortSecret = "qa-ui-overlap";
     const string longSecret = "qa-ui-overlap-SUFFIX";
     var savedLong = new SecretMask();
@@ -151,10 +170,12 @@ Test("UI extra secrets mask both overlap orders without retaining partial input"
     Require(savedShort.Redact(temporary) == temporary, "Ephemeral secret retained permanently");
 });
 
-Test("Locked file reports failure safely and recovers after unlocking", path => {
+Test("Locked file reports failure safely and recovers after unlocking", path =>
+{
     var writer = new BoundedLogFile(path);
     Require(writer.Write("BEFORE-LOCK-SENTINEL"), "Initial write failed");
-    using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) {
+    using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+    {
         Require(!writer.Write("WHILE-LOCKED-SENTINEL"), "Lock failure was hidden");
         Require(!string.IsNullOrWhiteSpace(writer.LastError), "Missing failure diagnostic");
     }
@@ -164,7 +185,8 @@ Test("Locked file reports failure safely and recovers after unlocking", path => 
     Require(text.Contains("BEFORE-LOCK-SENTINEL") && text.Contains("AFTER-LOCK-SENTINEL") && !text.Contains("WHILE-LOCKED-SENTINEL"), "Unexpected recovered contents");
 });
 
-Test("Invalid destination never exposes the sensitive path in LastError", path => {
+Test("Invalid destination never exposes the sensitive path in LastError", path =>
+{
     string blocked = Path.Combine(Path.GetDirectoryName(path)!, "qa-path-secret");
     File.WriteAllText(blocked, "blocks a directory");
     var writer = new BoundedLogFile(Path.Combine(blocked, "ProxyBridge.log"));

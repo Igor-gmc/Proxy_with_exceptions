@@ -4,7 +4,8 @@ Windows-приложение для подключения через HTTP CONNE
 с исключениями для отдельных программ. Использует sing-box, виртуальный
 адаптер Wintun и собственный модуль Windows Filtering Platform (WFP).
 
-Версия: **0.3.03**. Windows 10/11 x64; для работы нужны права администратора.
+Версия: **0.3.04**, кандидат после рефакторинга. Windows 10/11 x64;
+для работы нужны права администратора.
 
 ## Возможности
 
@@ -22,7 +23,7 @@ Windows-приложение для подключения через HTTP CONNE
 
 ## Первый запуск
 
-1. Соберите приложение по инструкции ниже и запустите `ProxyBridge-0.3.03.exe`.
+1. Соберите приложение по инструкции ниже и запустите `ProxyBridge-0.3.04.exe`.
 2. На странице «Прокси» введите адрес, порт, протокол и, если нужны, логин и пароль.
 3. Нажмите «Сохранить / применить», затем «Подключить».
 4. Дождитесь успешной проверки на странице «Обзор».
@@ -71,6 +72,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
 ## Тесты
 
 ```powershell
+dotnet run --project tests/Core.Tests -c Release
 dotnet run --project tests/Settings.Tests -c Release
 dotnet run --project tests/Logging.Tests -c Release
 dotnet run --project tests/Diagnostics.Tests -c Release
@@ -81,6 +83,13 @@ dotnet run --project tests/Diagnostics.Tests -c Release
 проверки и ограничения описаны в [tests/README.md](tests/README.md).
 Интеграционные проверки могут менять сетевое состояние: они вынесены в
 [отдельный стенд](integration/README.md) и не запускаются сборкой.
+
+Тестовые сценарии не входят в рабочий EXE. Для bundle/self/UI-проверок соберите
+отдельный хост командой `powershell -File build.ps1 -BuildOnly -IncludeTests`.
+Команды `--self-test`, `--ui-test` и `--bundle-test` принимаются только этим
+хостом. Рабочий EXE отклоняет их до запуска приложения. Его пользовательские
+режимы — без аргументов, `--startup` или `--recover`; смешанные и неизвестные
+аргументы также отклоняются.
 
 ## Данные и конфиденциальность
 
@@ -104,6 +113,10 @@ dotnet run --project tests/Diagnostics.Tests -c Release
 | `integration/` | Стенд ручных сетевых испытаний |
 | `tools/` | Восстановление зависимостей и вспомогательные инструменты |
 | `licenses/` | Уведомления и лицензии сторонних компонентов |
+
+Открывайте `ProxyBridge.slnx`, чтобы работать со всеми проектами. Границы модулей,
+порядок защитных операций и тестовые контракты описаны в
+[ARCHITECTURE.md](ARCHITECTURE.md). Стиль C# задаёт `.editorconfig`.
 
 История изменений — [CHANGELOG.md](CHANGELOG.md). Состав сторонних компонентов
 и их лицензии — [THIRD-PARTY.txt](THIRD-PARTY.txt). Этот файл не заменяет условия

@@ -6,6 +6,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../ProxyBridge/BoundedLogFile.cs" Link="BoundedLogFile.cs" />
+    <Compile Include="../../ProxyBridge/Logging/BoundedLogFile.cs" Link="BoundedLogFile.cs" />
   </ItemGroup>
 </Project>

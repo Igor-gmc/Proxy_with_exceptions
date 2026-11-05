@@ -20,7 +20,8 @@ def main():
     if not isinstance(denied, list) or any(not isinstance(s, str) or not s for s in denied):
         parser.error('Denylist must be an array of nonempty strings')
     roots = {'ProxyBridge', 'native', 'tests', 'integration', 'tools', 'licenses'}
-    root_files = {'.gitignore', '.gitattributes', 'README.md', 'README.txt', 'HELP.txt',
+    root_files = {'.gitignore', '.gitattributes', '.editorconfig', 'ProxyBridge.slnx',
+                  'ARCHITECTURE.md', 'README.md', 'README.txt', 'HELP.txt',
                   'CHANGELOG.md', 'THIRD-PARTY.txt', 'SECURITY.md', 'Version.props',
                   'build.ps1', 'Recover-Internet.cmd', 'Start-Emulator-Proxy.cmd'}
     allowed_extensions = {'.cs', '.cpp', '.csproj', '.ps1', '.py', '.md', '.txt', '.props', '.cmd'}
@@ -81,7 +82,7 @@ def main():
             for category, pattern in patterns.items():
                 if pattern.search(line):
                     fail(category, line_number)
-        if name == 'ProxyBridge/Settings.cs':
+        if name in ('ProxyBridge/Settings.cs', 'ProxyBridge/Configuration/Settings.cs'):
             if not re.search(r'Default\s*=>\s*new\("",\s*\d+,\s*"",\s*"",\s*"http"\)', text):
                 fail('default proxy credentials must be empty')
     if not count:

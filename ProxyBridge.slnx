@@ -1,0 +1,16 @@
+<Solution>
+  <Project Path="ProxyBridge/ProxyBridge.csproj" />
+  <Folder Name="/Tests/">
+    <Project Path="tests/Core.Tests/Core.Tests.csproj" />
+    <Project Path="tests/Settings.Tests/Settings.Tests.csproj" />
+    <Project Path="tests/Logging.Tests/Logging.Tests.csproj" />
+    <Project Path="tests/Activity.Tests/Activity.Tests.csproj" />
+    <Project Path="tests/Diagnostics.Tests/Diagnostics.Tests.csproj" />
+    <Project Path="tests/EngineConsole.Tests/EngineConsole.Tests.csproj" />
+    <Project Path="tests/TestHost/ProxyBridge.TestHost.csproj" />
+    <Project Path="tests/DesignPreview/DesignPreview.csproj" />
+  </Folder>
+  <Folder Name="/Integration/">
+    <Project Path="integration/ProxyBridge.Integration.csproj" />
+  </Folder>
+</Solution>

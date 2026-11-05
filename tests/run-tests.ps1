@@ -10,16 +10,7 @@ Set-StrictMode -Version Latest
 $scriptDirectory = $PSScriptRoot
 if ([string]::IsNullOrEmpty($scriptDirectory)) { $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if ([string]::IsNullOrEmpty($Executable)) {
-    $versionedExecutable = Get-ChildItem -LiteralPath (Join-Path $scriptDirectory '..') -Filter 'ProxyBridge-*.exe' -File |
-        ForEach-Object {
-            if ($_.Name -match '^ProxyBridge-([0-9]+\.[0-9]+\.[0-9]+)\.exe$') {
-                $parsedVersion = $null
-                if ([Version]::TryParse($Matches[1], [ref]$parsedVersion)) {
-                    [pscustomobject]@{ Version = $parsedVersion; Path = $_.FullName }
-                }
-            }
-        } | Sort-Object Version -Descending | Select-Object -First 1
-    $Executable = if ($null -ne $versionedExecutable) { $versionedExecutable.Path } else { Join-Path $scriptDirectory '..\ProxyBridge.exe' }
+    $Executable = Join-Path $scriptDirectory '..\artifacts\test-host\ProxyBridge.TestHost.exe'
 }
 if ([string]::IsNullOrEmpty($OutputDirectory)) { $OutputDirectory = Join-Path $scriptDirectory '..\artifacts\automated-tests' }
 $runId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -29,7 +20,7 @@ $summaryPath = Join-Path $runDirectory 'summary.json'
 $summary = [ordered]@{
     schemaVersion = 1; runId = $runId; startedUtc = [DateTime]::UtcNow.ToString('o')
     finishedUtc = $null; status = 'FAIL'; executable = $null; sha256 = $null
-    tests = @(); error = $null
+    testHost = 'ProxyBridge.TestHost'; tests = @(); error = $null
     limitations = @('No live network or TUN startup', 'No task registration or actual Windows logon', 'No real throughput measurement', 'No crash, IPv6, DNS or UDP isolation proof')
 }
 $lock = $null
@@ -50,17 +41,17 @@ try {
         throw 'ProxyBridge is already active. Close it yourself before running tests; the runner never stops another session.'
     }
     $source = (Resolve-Path -LiteralPath $Executable).Path
-    if ([IO.Path]::GetExtension($source) -ine '.exe') { throw 'Executable must be the built single-file EXE.' }
+    if ([IO.Path]::GetFileName($source) -ine 'ProxyBridge.TestHost.exe') { throw 'Executable must be the separately published ProxyBridge.TestHost.exe; run build.ps1 -IncludeTests.' }
     $summary.executable = $source
     $summary.sha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
     $binaryDirectory = Join-Path $runDirectory 'bin'
     New-Item -ItemType Directory -Path $binaryDirectory | Out-Null
-    $testExecutable = Join-Path $binaryDirectory 'ProxyBridge.exe'
+    $testExecutable = Join-Path $binaryDirectory 'ProxyBridge.TestHost.exe'
     Copy-Item -LiteralPath $source -Destination $testExecutable
     if ((Get-FileHash -LiteralPath $testExecutable -Algorithm SHA256).Hash -ne $summary.sha256) { throw 'Copied EXE checksum differs.' }
     $steps = @(
         @{ Name = 'bundle'; Arguments = '--bundle-test'; Report = 'bundle-test.txt'; MinimumPass = 1 },
-        @{ Name = 'self'; Arguments = '--self-test'; Report = 'self-test.txt'; MinimumPass = 34 },
+        @{ Name = 'self'; Arguments = '--self-test'; Report = 'self-test.txt'; MinimumPass = 52 },
         @{ Name = 'ui'; Arguments = '--ui-test'; Report = 'ui-test.txt'; MinimumPass = 1 },
         @{ Name = 'startup-ui'; Arguments = '--ui-test --startup'; Report = 'ui-test.txt'; MinimumPass = 1 }
     )
@@ -87,7 +78,7 @@ try {
             $info.UseShellExecute = $false
             $info.CreateNoWindow = $true
             # WinForms UI checks intentionally display their own window briefly.
-            # No console, shell, automatic elevation or live connect is launched.
+            # The explicit test host owns diagnostics; the shipping entry point is never used.
             $child = [Diagnostics.Process]::Start($info)
             if (-not $child.WaitForExit($TimeoutSeconds * 1000)) {
                 $abortRemaining = $true

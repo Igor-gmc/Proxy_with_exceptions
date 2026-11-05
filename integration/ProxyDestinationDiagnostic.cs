@@ -12,8 +12,11 @@ using ProxyBridge;
 internal static class ProxyDestinationDiagnostic
 {
     const SocketOptionName IpUnicastInterface = (SocketOptionName)31;
-    static readonly JsonSerializerOptions PhaseJson = new() { WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() } };
+    static readonly JsonSerializerOptions PhaseJson = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
     static readonly (string Label, IPAddress Address)[] Targets = [
         ("baseline-control", IPAddress.Parse("1.1.1.1")),
         ("incident-destination", IPAddress.Parse("104.18.32.47"))
@@ -26,24 +29,29 @@ internal static class ProxyDestinationDiagnostic
     static Socket NewSocket(int interfaceIndex)
     {
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-        try {
+        try
+        {
             socket.SetSocketOption(SocketOptionLevel.IP, IpUnicastInterface,
                 IPAddress.HostToNetworkOrder(interfaceIndex));
             return socket;
-        } catch { socket.Dispose(); throw; }
+        }
+        catch { socket.Dispose(); throw; }
     }
 
     static async Task<Result> DirectTcp(string label, IPAddress target, int interfaceIndex)
     {
         var began = DateTimeOffset.Now;
         var elapsed = Stopwatch.StartNew();
-        try {
+        try
+        {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             using var socket = NewSocket(interfaceIndex);
             await socket.ConnectAsync(new IPEndPoint(target, 443), deadline.Token);
             return new(began, "direct TCP only", label, 0, true, "tcp-connected", elapsed.ElapsedMilliseconds,
                 null, null, null, [new("tcp-connect", elapsed.ElapsedMilliseconds)], null);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             return new(began, "direct TCP only", label, 0, false, "tcp-connect", elapsed.ElapsedMilliseconds,
                 null, null, null, [], AppLog.ExceptionCodes(ex));
         }
@@ -64,7 +72,8 @@ internal static class ProxyDestinationDiagnostic
             stage = next;
             stageStart = elapsed.ElapsedMilliseconds;
         }
-        try {
+        try
+        {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var token = deadline.Token;
             using var socket = NewSocket(interfaceIndex);
@@ -78,23 +87,31 @@ internal static class ProxyDestinationDiagnostic
             await stream.ReadExactlyAsync(greeting, token);
             method = greeting[1];
             if (greeting[0] != 5 || greeting[1] != requestedMethod)
+            {
                 throw new InvalidDataException("SOCKS greeting version or selected method invalid.");
-            if (authenticated) {
+            }
+
+            if (authenticated)
+            {
                 Advance("socks-auth");
                 byte[] auth = new byte[3 + username.Length + password.Length];
-                try {
+                try
+                {
                     auth[0] = 1;
                     auth[1] = (byte)username.Length;
                     username.CopyTo(auth, 2);
                     auth[2 + username.Length] = (byte)password.Length;
                     password.CopyTo(auth, 3 + username.Length);
                     await stream.WriteAsync(auth, token);
-                } finally { Array.Clear(auth); }
+                }
+                finally { Array.Clear(auth); }
                 byte[] response = new byte[2];
                 await stream.ReadExactlyAsync(response, token);
                 authStatus = response[1];
                 if (response[0] != 1 || response[1] != 0)
+                {
                     throw new InvalidDataException("SOCKS authentication rejected or version invalid.");
+                }
             }
             Advance("socks-connect-target");
             byte[] request = new byte[10] { 5, 1, 0, 1, 0, 0, 0, 0, 1, 187 }; // IPv4, TCP port443
@@ -104,24 +121,39 @@ internal static class ProxyDestinationDiagnostic
             await stream.ReadExactlyAsync(header, token);
             reply = header[1];
             if (header[0] != 5 || header[2] != 0 || header[3] is not (1 or 3 or 4))
+            {
                 throw new InvalidDataException("SOCKS reply framing invalid.");
+            }
+
             int addressLength;
-            if (header[3] == 3) {
+            if (header[3] == 3)
+            {
                 byte[] length = new byte[1];
                 await stream.ReadExactlyAsync(length, token);
-                if (length[0] == 0) throw new InvalidDataException("SOCKS reply domain address empty.");
+                if (length[0] == 0)
+                {
+                    throw new InvalidDataException("SOCKS reply domain address empty.");
+                }
+
                 addressLength = length[0];
-            } else addressLength = header[3] == 1 ? 4 : 16;
+            }
+            else
+            {
+                addressLength = header[3] == 1 ? 4 : 16;
+            }
             // Consume the complete reply but never store the returned bound
             // address/port in a report or use it as another network destination.
             byte[] boundAddress = new byte[addressLength + 2];
-            try { await stream.ReadExactlyAsync(boundAddress, token); }
+            try
+            { await stream.ReadExactlyAsync(boundAddress, token); }
             finally { Array.Clear(boundAddress); }
             timings.Add(new(stage, elapsed.ElapsedMilliseconds - stageStart));
             return new(began, "SOCKS CONNECT only", label, round, reply == 0,
                 reply == 0 ? "connect-accepted" : "connect-rejected", elapsed.ElapsedMilliseconds,
                 method, authStatus, reply, timings.ToArray(), null);
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             timings.Add(new(stage, elapsed.ElapsedMilliseconds - stageStart));
             return new(began, "SOCKS CONNECT only", label, round, false, stage, elapsed.ElapsedMilliseconds,
                 method, authStatus, reply, timings.ToArray(), AppLog.ExceptionCodes(ex));
@@ -131,16 +163,27 @@ internal static class ProxyDestinationDiagnostic
     public static async Task RunAsync(Settings settings, int physicalInterfaceIndex, string output, Action<string> record)
     {
         settings.Validate();
-        if (settings.Protocol != "socks") throw new ArgumentException("Destination diagnostic requires saved SOCKS settings.");
+        if (settings.Protocol != "socks")
+        {
+            throw new ArgumentException("Destination diagnostic requires saved SOCKS settings.");
+        }
+
         if (physicalInterfaceIndex is <= 0 or > 0x00FFFFFF)
+        {
             throw new ArgumentOutOfRangeException(nameof(physicalInterfaceIndex));
+        }
+
         ArgumentNullException.ThrowIfNull(record);
         byte[] username = Encoding.UTF8.GetBytes(settings.Username);
         byte[] password = Encoding.UTF8.GetBytes(settings.Password);
-        try {
+        try
+        {
             if (username.Length > 255 || password.Length > 255 ||
                 (username.Length == 0) != (password.Length == 0))
+            {
                 throw new ArgumentException("SOCKS username/password must both be absent or each contain 1..255 encoded bytes.");
+            }
+
             string reportPath = Path.Combine(output, "proxy-destination-results.jsonl");
             using var file = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
             using var writer = new StreamWriter(file, new UTF8Encoding(false)) { AutoFlush = true };
@@ -156,17 +199,37 @@ internal static class ProxyDestinationDiagnostic
                 transport: new SocketProxyPhaseTransport(physicalInterfaceIndex));
             using (var phaseFile = new FileStream(Path.Combine(output, "proxy-phase-baseline.json"),
                 FileMode.CreateNew, FileAccess.Write, FileShare.Read))
-                JsonSerializer.Serialize(phaseFile, new { Started = phaseStarted, PhysicalInterfaceIndex = physicalInterfaceIndex,
-                    Stage = "standalone-baseline", EngineGeneration = 0L, StopwatchFrequency = Stopwatch.Frequency,
-                    Result = phaseResult, Observations = phaseObservations.ToArray() }, PhaseJson);
+            {
+                JsonSerializer.Serialize(phaseFile, new
+                {
+                    Started = phaseStarted,
+                    PhysicalInterfaceIndex = physicalInterfaceIndex,
+                    Stage = "standalone-baseline",
+                    EngineGeneration = 0L,
+                    StopwatchFrequency = Stopwatch.Frequency,
+                    Result = phaseResult,
+                    Observations = phaseObservations.ToArray()
+                }, PhaseJson);
+            }
+
             record($"{(phaseResult.Succeeded ? "PASS" : phaseResult.Outcome == ProbeOutcome.Skipped ? "SKIP" : "FAIL")}: physical phase baseline; phase={phaseResult.Phase}; outcome={phaseResult.Outcome}; http={phaseResult.HttpStatus}; socksREP={phaseResult.SocksReply}; errors={phaseResult.ErrorCodes ?? "none"}.");
             foreach (var target in Targets)
+            {
                 Save(await DirectTcp(target.Label, target.Address, physicalInterfaceIndex));
+            }
+
             for (int round = 1; round <= 3; round++)
+            {
                 foreach (var target in Targets)
+                {
                     Save(await SocksConnect(settings, target.Label, target.Address, round, physicalInterfaceIndex, username, password));
+                }
+            }
+
             record("OBSERVE: destination diagnostic completed; response bound addresses and credentials were not reported.");
-        } finally {
+        }
+        finally
+        {
             Array.Clear(username);
             Array.Clear(password);
         }

@@ -28,26 +28,38 @@ internal static class DiagnosticCaptureTest
     public static async Task RunAsync(string output, Action<string> record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        if (!OperatingSystem.IsWindows()) { record("SKIP: diagnostic collector smoke requires Windows."); return; }
+        if (!OperatingSystem.IsWindows())
+        { record("SKIP: diagnostic collector smoke requires Windows."); return; }
         if (DiagnosticJournal.Enabled || Settings.TestDirectory != null)
+        {
             throw new IOException("Diagnostic smoke requires a fresh, isolated integration process.");
+        }
+
         string root = Path.GetFullPath(output);
         BundledAssets.RejectReparsePoints(root);
         Directory.CreateDirectory(root);
         string data = Path.Combine(root, "diagnostic-data");
-        if (Directory.Exists(data) || File.Exists(data)) throw new IOException("Diagnostic data directory must be new.");
+        if (Directory.Exists(data) || File.Exists(data))
+        {
+            throw new IOException("Diagnostic data directory must be new.");
+        }
+
         Directory.CreateDirectory(data);
         Settings.TestDirectory = data;
         // Intentionally retain the override until this fresh process exits. A
         // bounded Stop timeout must never redirect a pending worker to production.
         bool journalStarted = false;
         var pairs = new List<LoopbackPair>();
-        try {
-            foreach (bool ipv6 in new[] { false, true }) {
+        try
+        {
+            foreach (bool ipv6 in new[] { false, true })
+            {
                 string family = ipv6 ? "IPv6" : "IPv4";
                 LoopbackPair pair;
-                try { pair = await OpenPair(ipv6); }
-                catch (SocketException ex) when (ipv6 && ex.SocketErrorCode is SocketError.AddressFamilyNotSupported or SocketError.ProtocolNotSupported) {
+                try
+                { pair = await OpenPair(ipv6); }
+                catch (SocketException ex) when (ipv6 && ex.SocketErrorCode is SocketError.AddressFamilyNotSupported or SocketError.ProtocolNotSupported)
+                {
                     record("SKIP: IPv6 loopback unavailable: " + AppLog.ExceptionCodes(ex));
                     continue;
                 }
@@ -63,7 +75,8 @@ internal static class DiagnosticCaptureTest
             await ObserveWfp(root, record);
 
             var primary = pairs.First(p => p.Address.AddressFamily == AddressFamily.InterNetwork);
-            DiagnosticJournal.Start(); journalStarted = true;
+            DiagnosticJournal.Start();
+            journalStarted = true;
             var capturedAt = DateTimeOffset.UtcNow;
             var context = new DiagnosticContext(primary.Address.ToString(), primary.ServerPort, "diagnostic-loopback",
                 Environment.ProcessId, Generation, 0, false, false, null, capturedAt, "diagnostic-smoke.before",
@@ -82,13 +95,23 @@ internal static class DiagnosticCaptureTest
             await DiagnosticJournal.StopAsync();
             journalStarted = false;
             if (DiagnosticJournal.Enabled || DiagnosticJournal.LastError != null)
+            {
                 throw new IOException("Diagnostic collector did not stop cleanly: " + DiagnosticJournal.LastError);
+            }
+
             if (!string.Equals(Settings.DataDir, data, StringComparison.OrdinalIgnoreCase))
+            {
                 throw new IOException("Diagnostic output escaped the isolated data directory.");
+            }
+
             AssertJournal(data, capturedAt, record);
-            WriteJson(Path.Combine(root, "diagnostic-smoke.json"), new {
-                pid = Environment.ProcessId, generation = Generation, triggerMilliseconds,
-                dataDirectory = data, journal = DiagnosticJournal.FilePath,
+            WriteJson(Path.Combine(root, "diagnostic-smoke.json"), new
+            {
+                pid = Environment.ProcessId,
+                generation = Generation,
+                triggerMilliseconds,
+                dataDirectory = data,
+                journal = DiagnosticJournal.FilePath,
                 source = "read-only collectors and loopback positive control",
                 blockPositiveControl = "not performed: no WFP policy changes",
                 fullPostWindow = "not exercised: smoke stops before the 30-second window completes"
@@ -97,9 +120,18 @@ internal static class DiagnosticCaptureTest
                 "; not a load/latency guarantee. TestDirectory remains isolated until process exit.");
             record("SKIP: known native WFP block tuple/provider positive control; this smoke deliberately creates no blocking policy.");
             record("SKIP: full 60-second retention/30-second post-window timing; covered separately from this short runtime smoke.");
-        } finally {
-            if (journalStarted) await DiagnosticJournal.StopAsync();
-            foreach (var pair in pairs) pair.Dispose();
+        }
+        finally
+        {
+            if (journalStarted)
+            {
+                await DiagnosticJournal.StopAsync();
+            }
+
+            foreach (var pair in pairs)
+            {
+                pair.Dispose();
+            }
         }
     }
 
@@ -110,68 +142,116 @@ internal static class DiagnosticCaptureTest
         var listener = new TcpListener(address, 0);
         var client = new TcpClient(address.AddressFamily);
         TcpClient? accepted = null;
-        try {
-            if (ipv6) { listener.Server.DualMode = false; client.Client.DualMode = false; }
+        try
+        {
+            if (ipv6)
+            { listener.Server.DualMode = false; client.Client.DualMode = false; }
             listener.Start();
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
             await client.ConnectAsync(address, port, timeout.Token);
             accepted = await listener.AcceptTcpClientAsync(timeout.Token);
             return new(listener, client, accepted, address, ((IPEndPoint)client.Client.LocalEndPoint!).Port, port);
-        } catch { accepted?.Dispose(); client.Dispose(); listener.Stop(); throw; }
+        }
+        catch { accepted?.Dispose(); client.Dispose(); listener.Stop(); throw; }
     }
 
     static void AssertTcp(TcpConnectionSnapshot snapshot, LoopbackPair pair, int family)
     {
         var result = snapshot.Families.Single(f => f.Family == family);
         if (result.Status != "captured" || result.Truncated)
+        {
             throw new IOException("TCP positive control family unavailable/truncated: " + result.Status + "/" + result.ErrorCode);
+        }
+
         bool Has(int localPort, int remotePort) => snapshot.Summary.Rows.Any(r =>
             r.ProcessId == (uint)Environment.ProcessId && r.Family == family && r.State == 5 &&
             r.LocalAddress == pair.Address.ToString() && r.RemoteAddress == pair.Address.ToString() &&
             r.LocalPort == localPort && r.RemotePort == remotePort);
         if (!Has(pair.ClientPort, pair.ServerPort) || !Has(pair.ServerPort, pair.ClientPort))
+        {
             throw new IOException("TCP snapshot did not identify both sides of the known loopback connection.");
+        }
+
         if (snapshot.Summary.Endpoint.Where(s => s.State == 5).Sum(s => s.Count) < 1 ||
             snapshot.Summary.Engine.Where(s => s.State == 5).Sum(s => s.Count) < 2 ||
             snapshot.EndedUtc < snapshot.StartedUtc || snapshot.EndedMonotonicTicks < snapshot.StartedMonotonicTicks ||
             snapshot.MonotonicFrequency != Stopwatch.Frequency)
+        {
             throw new IOException("TCP counts/timestamps disagree with positive control.");
+        }
     }
 
     static async Task ObserveWfp(string root, Action<string> record)
     {
         var observed = new ConcurrentQueue<WfpBlockEvent>();
         int admitted = 0;
-        using var observer = new WfpBlockDiagnostics(value => {
-            if (Interlocked.Increment(ref admitted) > 64) return false;
-            observed.Enqueue(value); return true;
+        using var observer = new WfpBlockDiagnostics(value =>
+        {
+            if (Interlocked.Increment(ref admitted) > 64)
+            {
+                return false;
+            }
+
+            observed.Enqueue(value);
+            return true;
         });
         WfpDiagnosticStatus started = observer.Start();
         long deadline = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency;
-        while (started.ReasonCode == "starting" && Stopwatch.GetTimestamp() < deadline) {
-            await Task.Delay(100); started = observer.ReadStatus();
+        while (started.ReasonCode == "starting" && Stopwatch.GetTimestamp() < deadline)
+        {
+            await Task.Delay(100);
+            started = observer.ReadStatus();
         }
-        if (started.State == "subscribed") {
+        if (started.State == "subscribed")
+        {
             if (!started.Subscribed || started.CollectionEnabled != true)
+            {
                 throw new IOException("WFP subscribed status contradicts prerequisites.");
+            }
+
             record("PASS: passive native WFP subscription started while collection was enabled.");
             await Task.Delay(500);
-        } else if (started.State is "collection_disabled" or "access_denied" or "unavailable") {
+        }
+        else if (started.State is "collection_disabled" or "access_denied" or "unavailable")
+        {
             record("SKIP: passive WFP source state=" + started.State + "; reason=" + started.ReasonCode +
                 "; nativeError=" + (started.NativeError is uint code ? "0x" + code.ToString("X8") : "none") + ". No global setting changed.");
-        } else throw new IOException("Unexpected WFP startup state: " + started.State);
+        }
+        else
+        {
+            throw new IOException("Unexpected WFP startup state: " + started.State);
+        }
+
         observer.Stop();
         var stopped = observer.ReadStatus();
         WriteJson(Path.Combine(root, "wfp-status.json"), new { started, stopped });
         WriteJson(Path.Combine(root, "wfp-observed.json"), new { knownPositiveControl = false, events = observed.ToArray() });
         if (stopped.CallbackErrors != 0 || stopped.ReasonCode is "stop_timeout" or "cleanup_error" || stopped.Subscribed)
+        {
             throw new IOException("WFP decoder/lifecycle fault: " + stopped.ReasonCode);
-        if (started.State == "subscribed" && stopped.State != "stopped") throw new IOException("Own WFP subscription did not stop.");
-        if (started.State == "subscribed") record("PASS: own WFP subscription stopped without a callback/lifecycle fault.");
-        if (observed.IsEmpty) record("SKIP: no incidental native classify-drop event arrived; this is not evidence of no blocking.");
-        else {
+        }
+
+        if (started.State == "subscribed" && stopped.State != "stopped")
+        {
+            throw new IOException("Own WFP subscription did not stop.");
+        }
+
+        if (started.State == "subscribed")
+        {
+            record("PASS: own WFP subscription stopped without a callback/lifecycle fault.");
+        }
+
+        if (observed.IsEmpty)
+        {
+            record("SKIP: no incidental native classify-drop event arrived; this is not evidence of no blocking.");
+        }
+        else
+        {
             if (observed.Any(e => e.ProcessId != null || e.Source != "wfp.net_event" || e.OriginStatus == "pending"))
+            {
                 throw new IOException("Native WFP event violated metadata contract.");
+            }
+
             record("PASS: incidental native WFP events decoded as metadata with unknown PID; filter attribution lacks a controlled positive case.");
         }
     }
@@ -198,12 +278,18 @@ internal static class DiagnosticCaptureTest
             decoded.LocalPort != 43123 || decoded.RemotePort != 8000 || decoded.Protocol != 6 ||
             decoded.FilterId != 1234 || decoded.LayerId != 48 || decoded.Direction != "outbound" ||
             decoded.ReauthorizationReason != 7 || decoded.EventUtc != time)
+        {
             throw new IOException("Synthetic WFP metadata fixture failed.");
+        }
+
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(8), 0);
         var unset = WfpBlockDiagnostics.DecodeEvent(header, drop, "ignored", time, Stopwatch.GetTimestamp())!;
         if (unset.LocalAddress != null || unset.RemoteAddress != null || unset.LocalPort != null || unset.RemotePort != null ||
             unset.ApplicationPath != null || unset.Protocol != null || unset.ProcessId != null || unset.ReauthorizationReason != null)
+        {
             throw new IOException("WFP decoder exposed a field without its presence flag.");
+        }
+
         WriteJson(Path.Combine(root, "wfp-decoder-fixture.json"), new { evidence = "synthetic bytes, not native delivery", decoded, unset });
     }
 
@@ -213,24 +299,50 @@ internal static class DiagnosticCaptureTest
         bool Has(string kind) => entries.Any(e => Kind(e) == kind);
         foreach (string required in new[] { "diagnostics.start", "context", "smoke.before", "incident.trigger", "smoke.after",
             "tcp.snapshot", "wfp.status", "collector.stats", "diagnostics.stop-requested" })
-            if (!Has(required)) throw new IOException("Diagnostic journal missing required kind: " + required);
+        {
+            if (!Has(required))
+            {
+                throw new IOException("Diagnostic journal missing required kind: " + required);
+            }
+        }
+
         var before = entries.Single(e => Kind(e) == "smoke.before");
         if (before.GetProperty("generation").GetInt64() != Generation || before.GetProperty("enginePid").GetInt32() != Environment.ProcessId ||
             !before.GetProperty("eventTime").TryGetDateTimeOffset(out _) || !before.GetProperty("observedAt").TryGetDateTimeOffset(out _) ||
             before.GetProperty("monotonicTicks").GetInt64() <= 0 || before.GetProperty("observedMonotonicTicks").GetInt64() <= 0)
+        {
             throw new IOException("Journal metadata lacks the captured generation/PID/timestamps.");
+        }
+
         if (!entries.Where(e => Kind(e) == "tcp.snapshot").Any(e =>
             e.GetProperty("data").GetProperty("EngineProcessId").ValueKind == JsonValueKind.Number &&
             e.GetProperty("data").GetProperty("EngineProcessId").GetInt32() == Environment.ProcessId))
+        {
             throw new IOException("Sampler did not use the known PID context.");
+        }
+
         var stats = entries.Last(e => Kind(e) == "collector.stats").GetProperty("data");
         foreach (string counter in new[] { "dropped", "incidentDropped", "errors" })
-            if (stats.GetProperty(counter).GetInt64() != 0) throw new IOException("Collector reported nonzero " + counter + ".");
-        if (stats.GetProperty("incidentCoalesced").GetInt64() < 1) throw new IOException("Repeated incident was not coalesced.");
+        {
+            if (stats.GetProperty(counter).GetInt64() != 0)
+            {
+                throw new IOException("Collector reported nonzero " + counter + ".");
+            }
+        }
+
+        if (stats.GetProperty("incidentCoalesced").GetInt64() < 1)
+        {
+            throw new IOException("Repeated incident was not coalesced.");
+        }
+
         record("PASS: runtime journal has collector TCP/WFP status, generation/PID/timestamps, zero reported collector errors/drops and coalesced retry.");
 
         string[] files = Directory.GetFiles(Path.Combine(data, "incidents"), "ProxyBridge-incident-*.jsonl");
-        if (files.Length != 1) throw new IOException("Expected exactly one coalesced incident file.");
+        if (files.Length != 1)
+        {
+            throw new IOException("Expected exactly one coalesced incident file.");
+        }
+
         var incident = ReadEntries(files[0]);
         int boundary = Array.FindIndex(incident, e => Kind(e) == "incident.pre-window-end");
         int pre = Array.FindIndex(incident, e => Kind(e) == "smoke.before");
@@ -240,17 +352,29 @@ internal static class DiagnosticCaptureTest
         if (Kind(metadata) != "incident.begin" || pre < 0 || boundary <= pre || post <= boundary ||
             frozen.GetProperty("EngineGeneration").GetInt64() != Generation || frozen.GetProperty("EnginePid").GetInt32() != Environment.ProcessId ||
             frozen.GetProperty("CapturedAt").GetDateTimeOffset() != capturedAt || frozen.GetProperty("PolicyVerified").ValueKind != JsonValueKind.Null)
+        {
             throw new IOException("Incident pre/post boundary or frozen context assertion failed.");
+        }
+
         record("PASS: isolated incident preserves pre-trigger evidence/context and appends post-trigger evidence after its boundary; no fresh policy audit is claimed.");
     }
 
     static string? Kind(JsonElement entry) => entry.TryGetProperty("kind", out var kind) ? kind.GetString() : null;
     static JsonElement[] ReadEntries(string path)
     {
-        if (!File.Exists(path) || new FileInfo(path).Length > EvidenceLimit) throw new IOException("Missing/oversized smoke evidence.");
+        if (!File.Exists(path) || new FileInfo(path).Length > EvidenceLimit)
+        {
+            throw new IOException("Missing/oversized smoke evidence.");
+        }
+
         var rows = new List<JsonElement>();
-        foreach (string line in File.ReadLines(path, Utf8)) {
-            if (rows.Count >= 20000) throw new IOException("Smoke evidence exceeded record limit.");
+        foreach (string line in File.ReadLines(path, Utf8))
+        {
+            if (rows.Count >= 20000)
+            {
+                throw new IOException("Smoke evidence exceeded record limit.");
+            }
+
             using var document = JsonDocument.Parse(line);
             rows.Add(document.RootElement.Clone());
         }

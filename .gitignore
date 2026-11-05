@@ -2,6 +2,9 @@
 /*
 !/.gitignore
 !/.gitattributes
+!/.editorconfig
+!/ProxyBridge.slnx
+!/ARCHITECTURE.md
 !/README.md
 !/README.txt
 !/HELP.txt

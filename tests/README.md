@@ -3,12 +3,17 @@
 После восстановления зависимостей и сборки из корня проекта:
 
 ```powershell
+dotnet run --project tests/Core.Tests -c Release
 dotnet run --project tests/Settings.Tests -c Release
 dotnet run --project tests/Logging.Tests -c Release
 dotnet run --project tests/Activity.Tests -c Release
 dotnet run --project tests/Diagnostics.Tests -c Release
 dotnet run --project tests/EngineConsole.Tests -c Release
 ```
+
+Core.Tests проверяет lifecycle через fake-операции, JSON-конфигурацию по четырём
+эталонам исходной версии, готовность TUN, разбор CLI, тестовые HTTPS-ответы и
+отсутствие тестовых типов в рабочей сборке. Native Guard в этом хосте запрещён.
 
 Settings.Tests проверяет пустой профиль, отсутствие автоматического создания
 настроек, валидацию, DPAPI roundtrip и повреждение файла в отдельной подпапке
@@ -20,11 +25,14 @@ artifacts. Рабочие настройки и сеть не меняются. 
 ## Проверка интерфейса
 
 ```powershell
-dotnet build tests/DesignPreview -c Release
-dotnet tests/DesignPreview/bin/Release/net10.0-windows/DesignPreview.dll --dll ABSOLUTE_PATH_TO_ProxyBridge.dll --out ABSOLUTE_NEW_OUTPUT --verify
+dotnet build ProxyBridge.slnx -c Release
+dotnet tests/DesignPreview/bin/Release/net10.0-windows/DesignPreview.dll --dll ABSOLUTE_PATH_TO_ProxyBridge.dll --test-host ABSOLUTE_PATH_TO_ProxyBridge.TestHost.dll --out ABSOLUTE_NEW_OUTPUT --verify
 ```
 
-Укажите DLL из сборки и новый каталог артефактов. Renderer использует только
+Укажите DLL приложения и TestHost из одной сборки и новый каталог артефактов.
+DLL тестового хоста находится в `tests/TestHost/bin/Release/net10.0-windows/`.
+Она нужна только renderer с `--verify`, рабочее приложение её не загружает.
+Renderer использует только
 синтетические настройки, не запускает обычную точку входа и запрещает загрузку
 нативного Guard. Проверяются переходы интерфейса и перерисовка углов кнопок.
 Снимки не являются доказательством реального сетевого подключения.
@@ -32,8 +40,14 @@ dotnet tests/DesignPreview/bin/Release/net10.0-windows/DesignPreview.dll --dll A
 ## Полный автоматический прогон
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -BuildOnly -IncludeTests
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-tests.ps1
 ```
+
+Runner запускает `artifacts/test-host/ProxyBridge.TestHost.exe` и копирует его
+в отдельный каталог прогона. Параметр `-Executable` теперь принимает именно
+TestHost, не пользовательский ProxyBridge EXE. В рабочем EXE тестовые флаги
+возвращают отказ; код тестов в него не компилируется.
 
 Только из административной консоли при закрытом ProxyBridge. Runner откажется
 работать рядом с активным приложением и не завершает его автоматически.

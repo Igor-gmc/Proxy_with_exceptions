@@ -1,10 +1,30 @@
-param([switch]$BuildOnly)
+[CmdletBinding()]
+param(
+    [switch]$BuildOnly,
+    [switch]$IncludeTests
+)
 
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 $root = $PSScriptRoot
 Set-Location -LiteralPath $root
 $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (!$vs) { throw 'Install Visual Studio C++ build tools and Windows SDK.' }
+
+# Fail before compiling when the explicit, version-pinned payload is incomplete.
+$dependencies = @(
+    'vendor\sing-box-1.14.4-windows-amd64\sing-box.exe',
+    'vendor\wintun\bin\amd64\wintun.dll',
+    'vendor\wintun\LICENSE.txt',
+    'vendor\SING-BOX-LICENSE.txt',
+    'vendor\TRACEEVENT-LICENSE.txt',
+    'vendor\DOTNET-LICENSE.txt'
+)
+foreach ($dependency in $dependencies) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root $dependency) -PathType Leaf)) {
+        throw "Missing $dependency. Run tools/Restore-Dependencies.ps1 first."
+    }
+}
 New-Item -ItemType Directory -Force dist, artifacts | Out-Null
 $bat = "@echo off`r`ncall `"$vs\VC\Auxiliary\Build\vcvars64.bat`"`r`ncl /nologo /LD /MT /EHsc /std:c++17 /W4 /O2 native\guard.cpp /Fo:artifacts\guard.obj /link /OUT:dist\ProxyGuard.dll /IMPLIB:artifacts\ProxyGuard.lib`r`n"
 [IO.File]::WriteAllText((Join-Path $root 'artifacts\native-build.cmd'), $bat)
@@ -20,6 +40,13 @@ Copy-Item vendor\wintun\LICENSE.txt (Join-Path $payload 'core\WINTUN-LICENSE.txt
 Copy-Item vendor\SING-BOX-LICENSE.txt (Join-Path $payload 'core')
 Copy-Item vendor\TRACEEVENT-LICENSE.txt, vendor\DOTNET-LICENSE.txt (Join-Path $payload 'core')
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath artifacts\payload.zip -Force
+# Only remove this invocation's temporary staging directory after the archive exists.
+$payloadPath = [IO.Path]::GetFullPath($payload)
+$artifactRoot = [IO.Path]::GetFullPath((Join-Path $root 'artifacts')).TrimEnd('\')
+if (-not $payloadPath.StartsWith($artifactRoot + '\payload-', [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Unexpected payload staging path'
+}
+Remove-Item -LiteralPath $payloadPath -Recurse -Force
 dotnet publish ProxyBridge\ProxyBridge.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o release
 if ($LASTEXITCODE) { throw 'Managed build failed' }
 $publishedExe = Join-Path $root 'release\ProxyBridge.exe'
@@ -41,4 +68,12 @@ $recoveryText = '@echo off' + "`r`n" + 'start "" "%~dp0' + $versionedName + '" -
 if (-not $BuildOnly) {
     Copy-Item -LiteralPath $releaseVersionedExe -Destination (Join-Path $root $versionedName) -Force
     Copy-Item -LiteralPath $releaseRecovery -Destination (Join-Path $root 'Recover-Internet.cmd') -Force
+}
+
+# A separate executable owns diagnostic CLI, synthetic profiles and UI tests.
+# Nothing from tests/ is compiled into the distributed application.
+if ($IncludeTests) {
+    dotnet publish tests\TestHost\ProxyBridge.TestHost.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts\test-host
+    if ($LASTEXITCODE) { throw 'Diagnostic test host build failed' }
+    Write-Host 'Test host: artifacts\test-host\ProxyBridge.TestHost.exe'
 }
