@@ -21,7 +21,7 @@ def main():
         parser.error('Denylist must be an array of nonempty strings')
     roots = {'ProxyBridge', 'native', 'tests', 'integration', 'tools', 'licenses'}
     root_files = {'.gitignore', '.gitattributes', '.editorconfig', 'ProxyBridge.slnx',
-                  'ARCHITECTURE.md', 'README.md', 'README.txt', 'HELP.txt',
+                  'ARCHITECTURE.md', 'README.md', 'README.en.md', 'README.txt', 'HELP.txt',
                   'CHANGELOG.md', 'THIRD-PARTY.txt', 'SECURITY.md', 'Version.props',
                   'build.ps1', 'Recover-Internet.cmd', 'Start-Emulator-Proxy.cmd'}
     allowed_extensions = {'.cs', '.cpp', '.csproj', '.ps1', '.py', '.md', '.txt', '.props', '.cmd'}
