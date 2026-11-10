@@ -346,7 +346,8 @@ internal static class Program
             var task = (Task)(monitorSuite ?? throw new InvalidOperationException("Test-host suite was not loaded."))
                 .Invoke(null, [form, capture])!;
             await task.WaitAsync(TimeSpan.FromSeconds(60));
-            Check("synthetic-monitor-suite", true, "Existing MonitorUiTests completed without live operations.");
+            Check("synthetic-monitor-suite", true,
+                "MonitorUiTests and real window/tray stop/release FIFO checks completed, including repeated retry ticks, awaited cleanup, failures, stale recovery after release and disposal; all operation bodies were synthetic.");
         }
     }
 

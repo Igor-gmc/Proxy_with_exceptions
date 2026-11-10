@@ -45,7 +45,20 @@ internal static class TestHostProgram
                 throw new IOException("The isolated test data directory already exists.");
             }
 
-            BundledAssets.Prepare();
+            if (command == "--ui-test")
+            {
+                // A regression in observe-only dispatch must never reach WFP.
+                // UI uses embedded help/icons and synthetic callbacks; it does
+                // not need an extracted engine or the production DLL resolver.
+                System.Runtime.InteropServices.NativeLibrary.SetDllImportResolver(typeof(Guard).Assembly,
+                    (name, _, _) => name.Equals("ProxyGuard.dll", StringComparison.OrdinalIgnoreCase)
+                        ? throw new DllNotFoundException("Native Guard is forbidden in the isolated UI test host.")
+                        : IntPtr.Zero);
+            }
+            else
+            {
+                BundledAssets.Prepare();
+            }
             switch (command)
             {
                 case "--bundle-test":

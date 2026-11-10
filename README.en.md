@@ -7,7 +7,7 @@ proxy, with exceptions for applications, IP addresses and subnets. It uses
 sing-box, a Wintun virtual adapter, and its own Windows Filtering Platform
 (WFP) module.
 
-Version: **0.4.00**. Requires
+Version: **0.4.01**. Requires
 Windows 10/11 x64 and administrator privileges to run.
 
 ## Features
@@ -18,6 +18,8 @@ Windows 10/11 x64 and administrator privileges to run.
   `192.168.1.10:8080`. Direct TCP/UDP to these destinations is permitted for
   all applications except DNS port 53. Address exceptions do not enable stopped DNS.
 - A kill switch with separate actions for stopping while blocking traffic and restoring internet access.
+- Stop and disconnect remain available while connecting; queued commands run
+  in order before the next automatic retry.
 - Startup at Windows sign-in, a system tray icon, and a speed test.
 - Local connection and activity logs, with TCP and WFP diagnostics.
 - A dark interface with Overview, Proxy, Exceptions, and Help pages.
@@ -32,7 +34,7 @@ name. SOCKS5 is used for TCP; unsupported UDP is intended to remain blocked.
 The application currently uses Russian interface labels. Their English meanings
 are included below to help you find the controls.
 
-1. Build the application as described below and run `ProxyBridge-0.4.00.exe`.
+1. Build the application as described below and run `ProxyBridge-0.4.01.exe`.
 2. On «Прокси» (Proxy), enter the address, port, protocol, and credentials if required.
 3. Click «Сохранить / применить» (Save / apply), then «Подключить» (Connect).
 4. Wait for a successful connection check on «Обзор» (Overview).
@@ -45,6 +47,16 @@ popup. «Остановить и блокировать» (Stop and block) keeps
 application's own blocking policy. Exiting with the kill switch preserved also
 leaves blocking enabled. If the application is closed, `Recover-Internet.cmd`
 requests explicit recovery through a UAC prompt.
+
+“Stop and block” and “Disconnect and restore internet” remain available while
+connecting. A clicked command waits for the current operation to finish and
+runs before the next automatic retry. Commands follow click order, and a log
+message confirms when a command is queued. Once stopping or disconnecting
+has run, automatic reconnection stops.
+The current attempt and its required cleanup finish before the command runs;
+the network operation is not interrupted immediately. Tray commands use the
+same queue. After a successful disconnect, a stale engine failure notification
+cannot enable blocking again.
 
 Exceptions intentionally allow direct access, including while the proxy is
 stopped. When manually stopping with application exceptions configured, system

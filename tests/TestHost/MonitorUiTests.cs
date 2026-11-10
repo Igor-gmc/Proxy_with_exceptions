@@ -26,11 +26,12 @@ internal static class MonitorUiTests
 
     internal static async Task RunAsync(MainForm form, Action<string>? capture = null)
     {
-        string[] names = ["connect", "apply", "block", "release", "speed", "host", "port", "username", "password",
-            "protocol", "exclusions", "addExclusion", "removeExclusion", "autoStart"];
+        string[] names = ["connect", "apply", "speed", "host", "port", "username", "password",
+            "protocol", "exclusions", "addExclusion", "addAddressExclusion", "removeExclusion", "autoStart"];
         var all = Descendants(form).ToArray();
         var controls = names.Select(name => all.Single(c => c.Name == name)).ToArray();
-        Require(controls.All(c => c.Enabled), "UI scheduler test requires initially enabled controls.");
+        var stopControls = new[] { "block", "release" }.Select(name => all.Single(c => c.Name == name)).ToArray();
+        Require(controls.Concat(stopControls).All(c => c.Enabled), "UI scheduler test requires initially enabled controls.");
         var initialVisual = form.VisualState;
         var status = all.Single(c => c.Name == "connectionStatus");
         string initialStatus = status.Text;
@@ -79,7 +80,7 @@ internal static class MonitorUiTests
                 try
                 {
                     await Await(entered.Task);
-                    Require(controls.All(c => c.Enabled), "Healthy monitor disabled controls during its await.");
+                    Require(controls.Concat(stopControls).All(c => c.Enabled), "Healthy monitor disabled controls during its await.");
                     if (i == 0)
                     {
                         capture?.Invoke("ui-monitor-during.png");
@@ -136,6 +137,7 @@ internal static class MonitorUiTests
                 await Await(cancellationObserved.Task);
                 Require(!firstEntered.Task.IsCompleted, "Cancellation request was mistaken for probe completion.");
                 Require(controls.All(c => !c.Enabled), "Pending manual command did not disable controls.");
+                Require(stopControls.All(c => c.Enabled), "Stop and release became unavailable while the manual command waited.");
                 Require(form.VisualState == initialVisual, "User cancellation was reported as a connection failure.");
 
                 form.NavigateTo("overview");
@@ -174,6 +176,7 @@ internal static class MonitorUiTests
                 await Await(first);
                 Require(controls.All(c => !c.Enabled) && !prematureEnable,
                     "Controls were enabled between pending manual commands.");
+                Require(stopControls.All(c => c.Enabled), "Stop and release became unavailable between queued commands.");
                 capture?.Invoke("ui-command-second-executing.png");
                 expectDisabled = false;
                 finishSecond.TrySetResult();
@@ -223,6 +226,7 @@ internal static class MonitorUiTests
             Require(followingActionRan && controls.All(c => c.Enabled), "Failed command retained the scheduler gate.");
             Require(form.VisualState == initialVisual, "Unrelated command failure changed connection state.");
             capture?.Invoke("ui-followup-after.png");
+            await QueuedStopUiTests.RunAsync(form, capture);
         }
         finally
         {

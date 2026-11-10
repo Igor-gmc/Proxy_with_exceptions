@@ -5,12 +5,15 @@ namespace ProxyBridge;
 internal sealed partial class MainForm
 {
     readonly System.Windows.Forms.Timer monitor = new() { Interval = 8000 };
-    readonly SemaphoreSlim operationGate = new(1, 1);
+    // All admission happens on the UI thread. Each ticket completes only after
+    // its predecessor and its own cleanup, so every accepted click stays FIFO.
+    Task operationTail = Task.CompletedTask;
     CancellationTokenSource? monitorCancellation;
     int pendingCommands;
     bool busy;
     bool monitorReadOnly;
     bool controlsDisabled;
+    StopCommandTestScope? stopCommandTestScope;
 
     async void OnMonitorTick(object? sender, EventArgs e)
     {
@@ -64,6 +67,64 @@ internal sealed partial class MainForm
 
         return Execute(action, "ui-test.command", syntheticTestCommand: true);
     }
+    internal Task RunRetryForUiTestAsync(Func<Task> action)
+    {
+        if (!observeOnly)
+        {
+            throw new InvalidOperationException("Synthetic retry is restricted to observe-only UI tests.");
+        }
+
+        return RunMonitorCycle(_ =>
+        {
+            PromoteMonitorMutation();
+            return action();
+        }, syntheticTestCommand: true);
+    }
+    internal Task WaitForCommandsForUiTestAsync()
+    {
+        if (!observeOnly)
+        {
+            throw new InvalidOperationException("Synthetic queue inspection requires observe-only mode.");
+        }
+
+        return operationTail;
+    }
+    internal IDisposable OverrideStopCommandsForUiTest(Func<Task> blockAction, Func<Task> releaseAction)
+    {
+        if (!observeOnly)
+        {
+            throw new InvalidOperationException("Synthetic stop commands require observe-only mode.");
+        }
+        if (stopCommandTestScope != null)
+        {
+            throw new InvalidOperationException("A synthetic stop-command scope is already active.");
+        }
+        ArgumentNullException.ThrowIfNull(blockAction);
+        ArgumentNullException.ThrowIfNull(releaseAction);
+        stopCommandTestScope = new(this, blockAction, releaseAction);
+        return stopCommandTestScope;
+    }
+    sealed class StopCommandTestScope(MainForm owner, Func<Task> blockAction, Func<Task> releaseAction) : IDisposable
+    {
+        public Func<Task> Block { get; } = blockAction;
+        public Func<Task> Release { get; } = releaseAction;
+
+        public void Dispose()
+        {
+            if (ReferenceEquals(owner.stopCommandTestScope, this))
+            {
+                owner.stopCommandTestScope = null;
+            }
+        }
+    }
+    Task QueueStopCommand(bool releaseProtection, string operationName)
+    {
+        var synthetic = stopCommandTestScope;
+        Func<Task> action = releaseProtection
+            ? synthetic?.Release ?? Release
+            : synthetic?.Block ?? Block;
+        return Execute(action, operationName, syntheticTestCommand: synthetic != null);
+    }
     void PromoteMonitorMutation()
     {
         if (!busy || OperationsClosed)
@@ -93,21 +154,38 @@ internal sealed partial class MainForm
             return;
         }
 
-        using var operation = operationName == null ? null : AppLog.BeginOperation(operationName);
+        Task predecessor = operationTail;
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        operationTail = completion.Task;
+        IDisposable? operation = null;
         bool entered = false, registered = false;
         try
         {
+            operation = operationName == null ? null : AppLog.BeginOperation(operationName);
             if (!background)
             {
                 pendingCommands++;
                 registered = true;
                 SetControlsEnabled(false);
+                if (!predecessor.IsCompleted)
+                {
+                    string? command = operationName switch
+                    {
+                        "ui.block" or "tray.block" => "Остановить и блокировать",
+                        "ui.release" or "tray.release" => "Отключить и вернуть интернет",
+                        _ => null
+                    };
+                    if (command != null)
+                    {
+                        Append($"Команда «{command}» поставлена в очередь и выполнится после текущей операции.");
+                    }
+                }
                 if (monitorReadOnly)
                 {
                     monitorCancellation?.Cancel();
                 }
             }
-            await operationGate.WaitAsync();
+            await predecessor;
             entered = true;
             if (OperationsClosed)
             {
@@ -115,13 +193,12 @@ internal sealed partial class MainForm
             }
 
             busy = true;
-            if (operationName != null)
-            {
-                LogState("operation.begin");
-            }
-
             try
             {
+                if (operationName != null)
+                {
+                    LogState("operation.begin");
+                }
                 await action();
             }
             catch (Exception ex)
@@ -135,12 +212,12 @@ internal sealed partial class MainForm
             finally
             {
                 // Preserve the immediate exit revocation and finish its recovery
-                // under the same gate before allowing a queued user command.
-                if (!OperationsClosed && pendingConnectionFailure != null && protection.ProtectionRequired)
+                // within the same queue ticket before allowing a user command.
+                if (!OperationsClosed)
                 {
                     try
                     {
-                        await RecoverConnection(pendingConnectionFailure);
+                        await RecoverPendingConnectionFailure();
                     }
                     catch (Exception ex) { AppLog.Error("Ошибка восстановления защиты", ex); SetVisualState(ProxyVisualState.Failed); ReportError(ex.Message); }
                 }
@@ -156,18 +233,22 @@ internal sealed partial class MainForm
         }
         finally
         {
-            if (entered)
-            {
-                busy = false;
-            }
-
-            if (registered)
-            {
-                pendingCommands--;
-            }
-
             try
             {
+                // An admission/logging error or disposal must not complete this
+                // ticket early and let a later command overtake its predecessor.
+                if (!entered)
+                {
+                    await predecessor;
+                }
+                if (entered)
+                {
+                    busy = false;
+                }
+                if (registered)
+                {
+                    pendingCommands--;
+                }
                 if (!OperationsClosed && !busy && pendingCommands == 0)
                 {
                     SetControlsEnabled(true);
@@ -180,10 +261,11 @@ internal sealed partial class MainForm
             }
             finally
             {
-                if (entered)
+                try
                 {
-                    operationGate.Release();
+                    operation?.Dispose();
                 }
+                finally { completion.TrySetResult(); }
             }
         }
     }

@@ -78,12 +78,22 @@ internal sealed partial class MainForm
         LogState("engine.exit-notification.active-permits-revoked");
         if (!busy)
         {
-            await Execute(() => RecoverConnection(pendingConnectionFailure), "engine.exit-recovery");
+            await Execute(RecoverPendingConnectionFailure, "engine.exit-recovery");
         }
         else
         {
             AppLog.Write("ENGINE exit recovery queued until current operation completes");
         }
+    }
+
+    Task RecoverPendingConnectionFailure()
+    {
+        // A queued Release may have handled this failure and removed protection
+        // before this callback reaches the front of the operation queue.
+        var failure = pendingConnectionFailure;
+        return failure != null && protection.ProtectionRequired
+            ? RecoverConnection(failure)
+            : Task.CompletedTask;
     }
 
     void CancelSpeedTest()

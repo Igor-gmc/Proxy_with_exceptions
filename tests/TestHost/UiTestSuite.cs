@@ -58,7 +58,7 @@ internal static class UiTestSuite
                 CaptureUi(form, "ui-close-before.png");
                 form.Close();
                 bool passed = wasVisible && !form.Visible && !form.IsDisposed && form.VisualState == ProxyVisualState.Paused;
-                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "ui-test.txt"), passed ? "PASS: visible overview/startup, four navigation pages, embedded help, unsaved indicator, minimum-size capture and action button height, protocol/exclusions/masked password, D/P/S icons, operation-error state preservation, stable monitor controls, canceled probe joins before serialized commands, disabled-button capture, close-to-tray" : "FAIL: startup visibility or close-to-tray");
+                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "ui-test.txt"), passed ? "PASS: visible overview/startup, four navigation pages, embedded help, unsaved indicator, minimum-size capture and action button height, protocol/exclusions/masked password, D/P/S icons, operation-error state preservation, stable monitor controls, canceled probe joins before serialized commands, real window/tray stop/release FIFO during connect/retry, repeated retry ticks cannot overtake clicks, failed connect and command cleanup, scope/disposal isolation, disabled-button capture, close-to-tray" : "FAIL: startup visibility or close-to-tray");
                 if (!passed)
                 {
                     Environment.ExitCode = 1;

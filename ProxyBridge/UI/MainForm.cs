@@ -95,8 +95,8 @@ internal sealed partial class MainForm : Form
     {
         connect.Click += async (_, _) => await Execute(Connect, "ui.connect");
         apply.Click += async (_, _) => await Execute(ApplySettings, "ui.apply-settings");
-        block.Click += async (_, _) => await Execute(Block, "ui.block");
-        release.Click += async (_, _) => await Execute(Release, "ui.release");
+        block.Click += async (_, _) => await QueueStopCommand(releaseProtection: false, "ui.block");
+        release.Click += async (_, _) => await QueueStopCommand(releaseProtection: true, "ui.release");
         speed.Click += async (_, _) => await Execute(TestSpeed, "ui.speed-test");
         writeLogNote.Click += async (_, _) => await WriteUserNoteAsync();
         cancelSpeed.Click += (_, _) => CancelSpeedTest();
@@ -107,8 +107,8 @@ internal sealed partial class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => OpenFromTray("tray.open"));
         menu.Items.Add("Подключить", null, async (_, _) => await Execute(Connect, "tray.connect"));
-        menu.Items.Add("Остановить и блокировать", null, async (_, _) => await Execute(Block, "tray.block"));
-        menu.Items.Add("Отключить и вернуть интернет", null, async (_, _) => await Execute(Release, "tray.release"));
+        menu.Items.Add("Остановить и блокировать", null, async (_, _) => await QueueStopCommand(releaseProtection: false, "tray.block"));
+        menu.Items.Add("Отключить и вернуть интернет", null, async (_, _) => await QueueStopCommand(releaseProtection: true, "tray.release"));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход и восстановить интернет", null,
             async (_, _) => await Execute(ExitAndReleaseProtection, "tray.exit-release"));
@@ -344,13 +344,16 @@ internal sealed partial class MainForm : Form
     }
     void SetControlsEnabled(bool enabled)
     {
+        // These commands join the operation queue; accepting a click must not
+        // depend on the current connection attempt or read-only monitor probe.
+        block.Enabled = release.Enabled = !OperationsClosed;
         if (controlsDisabled == !enabled)
         {
             return;
         }
 
         controlsDisabled = !enabled;
-        connect.Enabled = apply.Enabled = block.Enabled = release.Enabled = speed.Enabled = enabled;
+        connect.Enabled = apply.Enabled = speed.Enabled = enabled;
         host.Enabled = port.Enabled = username.Enabled = password.Enabled = protocol.Enabled = enabled;
         exclusions.Enabled = addExclusion.Enabled = addAddressExclusion.Enabled = removeExclusion.Enabled = autoStart.Enabled = enabled;
     }
