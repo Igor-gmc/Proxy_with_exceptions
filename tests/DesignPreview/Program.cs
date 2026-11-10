@@ -142,6 +142,8 @@ internal static class Program
                 ["192.0.2.10", 8080, "preview-user", "synthetic-preview-only", "http"])!;
             settingsType.GetProperty("ExcludedApplications")!.SetValue(sample,
                 new[] { @"C:\Preview Apps\Firefox\firefox.exe", @"C:\Preview Apps\Music\music.exe" });
+            settingsType.GetProperty("ExcludedAddresses")!.SetValue(sample,
+                new[] { "192.168.1.0/24", "192.168.2.10:8080", "[fd00::/64]:8443" });
             settingsType.GetMethod("Save")!.Invoke(sample, null);
 
             form = (Form)Activator.CreateInstance(Type("MainForm"), [false, false, true])!;
@@ -282,6 +284,7 @@ internal static class Program
                 "Real navigation button selected the requested page.");
             Capture(form, "ui-" + page.Item1 + ".png");
         }
+        await AddressExclusionUiAsync(form);
         Call(form, "NavigateTo", "overview");
         Size full = form.Size;
         form.Size = form.MinimumSize;
@@ -344,6 +347,86 @@ internal static class Program
                 .Invoke(null, [form, capture])!;
             await task.WaitAsync(TimeSpan.FromSeconds(60));
             Check("synthetic-monitor-suite", true, "Existing MonitorUiTests completed without live operations.");
+        }
+    }
+
+    static async Task AddressExclusionUiAsync(Form form)
+    {
+        Call(form, "NavigateTo", "exclusions");
+        var list = (ListBox)Named(form, "exclusions");
+        string[] original = list.Items.Cast<string>().ToArray();
+        Check("address-list-load", original.Length == 5 && original.Contains("192.168.1.0/24") &&
+            original.Contains("[fd00::/64]:8443"), "Mixed EXE, IPv4 subnet, port and IPv6 settings loaded.");
+        Check("address-add-action", Named(form, "addAddressExclusion") is Button,
+            "A dedicated address action exists on the exclusions page.");
+        Check("address-initial-clean", !Named(form, "unsavedChanges").Visible, "Loading mixed settings is not a pending change.");
+        try
+        {
+            Call(form, "AddAddressExclusion", "198.51.100.77/24:9443");
+            Check("address-add-normalized", list.Items.Contains("198.51.100.0/24:9443") && list.Items.Count == 6,
+                "Adding an address normalizes its network and retains existing EXE rows.");
+            Check("address-add-dirty", Named(form, "unsavedChanges").Visible, "Address edits show unsaved changes.");
+            Call(form, "AddAddressExclusion", "198.51.100.99/24:9443");
+            Check("address-add-deduplicated", list.Items.Count == 6, "Equivalent subnets do not duplicate a row.");
+            var pending = Type("MainForm").GetMethod("ReadSettings", Instance)!.Invoke(form, null)!;
+            var settings = Type("Settings");
+            Check("address-read-settings", ((string[])settings.GetProperty("ExcludedAddresses")!.GetValue(pending)!).Length == 4 &&
+                ((string[])settings.GetProperty("ExcludedApplications")!.GetValue(pending)!).Length == 2,
+                "Pending settings keep address and EXE rules in their respective fields.");
+            Capture(form, "ui-exclusions-address-pending.png");
+            list.SelectedItem = "198.51.100.0/24:9443";
+            Call(form, "RemoveSelectedExclusion");
+            Check("address-remove-restores-clean", list.Items.Cast<string>().SequenceEqual(original) &&
+                !Named(form, "unsavedChanges").Visible, "Removing the pending address restores the saved list and clean state.");
+
+            Size full = form.Size;
+            form.Size = form.MinimumSize;
+            await Task.Delay(120);
+            Capture(form, "ui-exclusions-address-minimum.png");
+            form.Size = full;
+
+            using (var dialog = (Form)Activator.CreateInstance(Type("AddressExclusionDialog"))!)
+            {
+                dialog.Show(form);
+                await Task.Delay(80);
+                var address = (TextBox)Named(dialog, "exclusionAddress");
+                var port = (TextBox)Named(dialog, "exclusionPort");
+                var confirm = Type("AddressExclusionDialog").GetMethod("Confirm", Instance)!;
+                address.Text = "192.168.1.0/24";
+                port.Text = "53";
+                confirm.Invoke(dialog, null);
+                Check("address-dialog-dns-rejected", dialog.DialogResult != DialogResult.OK &&
+                    Named(dialog, "addressExclusionError").Text.Length > 0,
+                    "Direct DNS is rejected with an inline error while the dialog stays open.");
+                Capture(dialog, "ui-address-dialog-error.png");
+                address.Text = "[fd00::1]:443";
+                port.Text = "8443";
+                confirm.Invoke(dialog, null);
+                Check("address-dialog-duplicate-port-rejected", dialog.DialogResult != DialogResult.OK &&
+                    Named(dialog, "addressExclusionError").Text.Length > 0, "Conflicting inline and separate ports are rejected.");
+                address.Text = "fd00::1234/64";
+                port.Text = "8443";
+                Capture(dialog, "ui-address-dialog.png");
+                confirm.Invoke(dialog, null);
+                Check("address-dialog-subnet-and-port", dialog.DialogResult == DialogResult.OK &&
+                    (string?)Type("AddressExclusionDialog").GetProperty("Value")!.GetValue(dialog) == "[fd00::/64]:8443",
+                    "Separate address and port fields produce the canonical IPv6 subnet rule.");
+            }
+            using (var dialog = (Form)Activator.CreateInstance(Type("AddressExclusionDialog"))!)
+            {
+                dialog.Show(form);
+                ((TextBox)Named(dialog, "exclusionAddress")).Text = "192.168.1.0/24";
+                ((Button)Named(dialog, "cancelAddressExclusion")).PerformClick();
+                Check("address-dialog-cancel", dialog.DialogResult == DialogResult.Cancel &&
+                    Type("AddressExclusionDialog").GetProperty("Value")!.GetValue(dialog) == null &&
+                    list.Items.Cast<string>().SequenceEqual(original), "Cancel creates no rule and preserves the pending list.");
+            }
+        }
+        finally
+        {
+            list.Items.Clear();
+            list.Items.AddRange(original);
+            Call(form, "RefreshOverviewSummary");
         }
     }
 
@@ -596,8 +679,8 @@ internal static class Program
             width = form.Width,
             height = form.Height,
             dpi = form.DeviceDpi,
-            page = Type("MainForm").GetProperty("CurrentPage", Instance)!.GetValue(form),
-            compact = Type("MainForm").GetProperty("IsCompact", Instance)!.GetValue(form),
+            page = form.GetType() == Type("MainForm") ? Type("MainForm").GetProperty("CurrentPage", Instance)!.GetValue(form) : form.Name,
+            compact = form.GetType() == Type("MainForm") && (bool)Type("MainForm").GetProperty("IsCompact", Instance)!.GetValue(form)!,
             controls = visible.Select(control => new
             {
                 name = control.Name,

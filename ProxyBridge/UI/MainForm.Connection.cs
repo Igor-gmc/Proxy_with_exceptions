@@ -151,9 +151,10 @@ internal sealed partial class MainForm
     void ShowRecovery(ProtectionOutcome outcome, string context, bool manual)
     {
         bool blocked = outcome.PolicyVerified && outcome.EngineStopped;
-        string blockedDetails = settings.ExcludedApplications.Length == 0
+        int exclusionCount = settings.ExcludedApplications.Length + settings.ExcludedAddresses.Length;
+        string blockedDetails = exclusionCount == 0
             ? " · блокировка подтверждена, исключений нет"
-            : $" · блокировка подтверждена · исключений: {settings.ExcludedApplications.Length}";
+            : $" · блокировка подтверждена · исключений: {exclusionCount}";
         if (blocked && settings.ExcludedApplications.Length > 0)
         {
             blockedDetails += protection.StoppedDnsAllowed
@@ -366,7 +367,7 @@ internal sealed partial class MainForm
         ActivitySettingsSaved();
         protection.UseSettings(settings);
         protection.RequestConnect();
-        AppLog.Write($"CONNECT settings accepted protocol={settings.Protocol} exclusions={settings.ExcludedApplications.Length}");
+        AppLog.Write($"CONNECT settings accepted protocol={settings.Protocol} exclusions={settings.ExcludedApplications.Length} addressExclusions={settings.ExcludedAddresses.Length}");
         await StartProtected();
     }
     async Task StartProtected()

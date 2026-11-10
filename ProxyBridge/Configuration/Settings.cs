@@ -5,8 +5,10 @@ namespace ProxyBridge;
 internal record Settings(string Host, int Port, string Username, string Password, string Protocol)
 {
     const int MaximumExcludedApplications = 64;
+    const int MaximumExcludedAddresses = 64;
 
     string[] excludedApplications = [];
+    string[] excludedAddresses = [];
 
     public bool ActivityLoggingEnabled { get; init; } = true;
 
@@ -14,6 +16,31 @@ internal record Settings(string Host, int Port, string Username, string Password
     {
         get => excludedApplications;
         init => excludedApplications = NormalizeExcludedApplications(value);
+    }
+
+    public string[] ExcludedAddresses
+    {
+        get => excludedAddresses;
+        init => excludedAddresses = NormalizeExcludedAddresses(value);
+    }
+
+    public static string[] NormalizeExcludedAddresses(IEnumerable<string>? addresses)
+    {
+        if (addresses is null)
+        {
+            throw new ArgumentException("Список адресных исключений повреждён.");
+        }
+
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string value in addresses)
+        {
+            result.Add(AddressExclusion.Parse(value).Value);
+            if (result.Count > MaximumExcludedAddresses)
+            {
+                throw new ArgumentException("Можно добавить не более 64 адресов или подсетей.");
+            }
+        }
+        return result.ToArray();
     }
 
     public static string[] NormalizeExcludedApplications(IEnumerable<string>? paths)
@@ -72,6 +99,7 @@ internal record Settings(string Host, int Port, string Username, string Password
         }
 
         _ = NormalizeExcludedApplications(ExcludedApplications);
+        _ = NormalizeExcludedAddresses(ExcludedAddresses);
     }
 
     public static void PrepareDirectory() => SettingsStore.PrepareDirectory(DataDir);

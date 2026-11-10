@@ -39,11 +39,13 @@ internal sealed partial class MainForm
         protocol.Items.AddRange(["HTTP CONNECT", "SOCKS5 (TCP)"]);
         protocol.SelectedIndex = settings.Protocol == "http" ? 0 : 1;
         exclusions.Items.AddRange(settings.ExcludedApplications);
+        exclusions.Items.AddRange(settings.ExcludedAddresses);
     }
 
     void WireSettingsEvents()
     {
         addExclusion.Click += (_, _) => AddExcludedApplications();
+        addAddressExclusion.Click += (_, _) => AddExcludedAddress();
         removeExclusion.Click += (_, _) => RemoveSelectedExclusion();
         try
         {
@@ -70,9 +72,11 @@ internal sealed partial class MainForm
         }
         try
         {
-            var paths = Settings.NormalizeExcludedApplications(exclusions.Items.Cast<string>().Concat(dialog.FileNames));
+            var paths = Settings.NormalizeExcludedApplications(ExcludedApplicationItems().Concat(dialog.FileNames));
+            var addresses = ExcludedAddressItems();
             exclusions.Items.Clear();
             exclusions.Items.AddRange(paths);
+            exclusions.Items.AddRange(addresses);
             RefreshOverviewSummary();
             AppLog.Write($"ACTION exclusion.add pendingCount={exclusions.Items.Count}");
         }
@@ -80,6 +84,44 @@ internal sealed partial class MainForm
         {
             Append(ex.Message);
         }
+    }
+
+    string[] ExcludedApplicationItems() => exclusions.Items.Cast<string>()
+        .Where(value => !AddressExclusion.TryParse(value, out _)).ToArray();
+
+    string[] ExcludedAddressItems() => exclusions.Items.Cast<string>()
+        .Where(value => AddressExclusion.TryParse(value, out _)).ToArray();
+
+    void AddExcludedAddress()
+    {
+        using var operation = AppLog.BeginOperation("ui.exclusion.address.add");
+        using var dialog = new AddressExclusionDialog();
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            AddAddressExclusion(dialog.Value!);
+            AppLog.Write($"ACTION exclusion.address.add pendingCount={ExcludedAddressItems().Length}");
+        }
+        catch (Exception ex)
+        {
+            Append(ex.Message);
+        }
+    }
+
+    void AddAddressExclusion(string value)
+    {
+        string canonical = AddressExclusion.Parse(value).Value;
+        var addresses = Settings.NormalizeExcludedAddresses(ExcludedAddressItems().Append(canonical));
+        var applications = ExcludedApplicationItems();
+        exclusions.Items.Clear();
+        exclusions.Items.AddRange(applications);
+        exclusions.Items.AddRange(addresses);
+        exclusions.SelectedItem = canonical;
+        RefreshOverviewSummary();
     }
 
     void RemoveSelectedExclusion()
@@ -128,7 +170,8 @@ internal sealed partial class MainForm
         AppLog.RegisterSecret(password.Text);
         return new(host.Text.Trim(), int.TryParse(port.Text, out int p) ? p : 0, username.Text, password.Text, protocol.SelectedIndex == 0 ? "http" : "socks")
         {
-            ExcludedApplications = exclusions.Items.Cast<string>().ToArray(),
+            ExcludedApplications = ExcludedApplicationItems(),
+            ExcludedAddresses = ExcludedAddressItems(),
             ActivityLoggingEnabled = settings.ActivityLoggingEnabled
         };
     }
@@ -141,7 +184,7 @@ internal sealed partial class MainForm
         settings = next;
         ActivitySettingsSaved();
         protection.UseSettings(settings);
-        AppLog.Write($"SETTINGS applied protocol={settings.Protocol} exclusions={settings.ExcludedApplications.Length} reconnect={reconnect}");
+        AppLog.Write($"SETTINGS applied protocol={settings.Protocol} exclusions={settings.ExcludedApplications.Length} addressExclusions={settings.ExcludedAddresses.Length} reconnect={reconnect}");
         Append(reconnect ? "Настройки сохранены. Переподключение с новым прокси…" : "Настройки сохранены. Нажмите «Подключить», чтобы использовать их.");
         if (reconnect)
         {

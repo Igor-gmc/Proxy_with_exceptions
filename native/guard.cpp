@@ -43,10 +43,26 @@ struct Rule {
     bool active=false;
     unsigned slot=0;
 };
+// V5 ABI: no pointers or platform-sized fields in an address entry. IPv4 uses
+// the first four network-order bytes; the remaining bytes must be zero.
+struct AddressExclusion {
+    UINT32 family;
+    UINT32 prefixLength;
+    UINT32 port; // Zero means any TCP/UDP destination port except DNS (53).
+    BYTE address[16];
+};
+static_assert(sizeof(AddressExclusion)==28,"AddressExclusion ABI size changed");
 struct Policy {
     UINT64 luid;
     std::vector<FWP_BYTE_BLOB*> apps;
     std::vector<Rule> rules;
+    struct AddressRange {
+        UINT32 family;
+        UINT16 port;
+        FWP_V4_ADDR_AND_MASK v4{};
+        FWP_V6_ADDR_AND_MASK v6{};
+    };
+    std::vector<AddressRange> addressRanges;
     struct DnsEndpoint { UINT64 luid; UINT32 ipv4; FWP_BYTE_ARRAY16 ipv6; bool v6; };
     std::vector<DnsEndpoint> dns;
     FWP_BYTE_BLOB dnsIdentity{};
@@ -70,6 +86,35 @@ static bool absolutePath(const wchar_t* path) {
     if(!path || !*path) return false;
     size_t n=wcslen(path);
     return n>3 && ((path[1]==L':' && (path[2]==L'\\' || path[2]==L'/')) || (path[0]==L'\\' && path[1]==L'\\'));
+}
+static DWORD addressRanges(Policy& p,const AddressExclusion* addresses,UINT32 count) {
+    if(count>64 || (count && !addresses)) return ERROR_INVALID_PARAMETER;
+    // Finish allocating every mask before rules retain pointers to this vector.
+    p.addressRanges.reserve(count);
+    for(UINT32 i=0;i<count;i++) {
+        const auto& a=addresses[i];
+        if((a.family!=4 && a.family!=6) || a.prefixLength>(a.family==4 ? 32u : 128u) ||
+            a.port>65535 || a.port==53) return ERROR_INVALID_PARAMETER;
+        UINT32 bytes=a.family==4 ? 4 : 16;
+        for(UINT32 j=0;j<16;j++) {
+            UINT32 remaining=a.prefixLength>j*8 ? a.prefixLength-j*8 : 0;
+            UINT32 prefix=remaining>8 ? 8 : remaining;
+            BYTE mask=static_cast<BYTE>(0xffu << (8-prefix));
+            if((j>=bytes && a.address[j]) || (a.address[j] & static_cast<BYTE>(~mask))) return ERROR_INVALID_PARAMETER;
+        }
+        const BYTE mappedPrefix[12]={0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+        if(a.family==6 && !memcmp(a.address,mappedPrefix,12)) return ERROR_INVALID_PARAMETER;
+        Policy::AddressRange range{}; range.family=a.family; range.port=static_cast<UINT16>(a.port);
+        if(a.family==4) {
+            range.v4.addr=(static_cast<UINT32>(a.address[0])<<24) | (static_cast<UINT32>(a.address[1])<<16) |
+                (static_cast<UINT32>(a.address[2])<<8) | a.address[3];
+            range.v4.mask=a.prefixLength ? (0xffffffffu << (32-a.prefixLength)) : 0;
+        } else {
+            memcpy(range.v6.addr,a.address,16); range.v6.prefixLength=static_cast<UINT8>(a.prefixLength);
+        }
+        p.addressRanges.push_back(range);
+    }
+    return ERROR_SUCCESS;
 }
 static DWORD stoppedDns(Policy& p) {
     // Match the Dnscache service SID, never every svchost or every port 53
@@ -155,9 +200,10 @@ static DWORD stoppedDns(Policy& p) {
     }
     return ERROR_SUCCESS;
 }
-static DWORD build(Policy& p,UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,bool allowStoppedDns=false) {
+static DWORD build(Policy& p,UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,bool allowStoppedDns=false,const AddressExclusion* addresses=nullptr,UINT32 addressCount=0) {
     if(!ip || (ip>>24)==127 || !port || !absolutePath(engine) || count>64 || (count && !excluded)) return ERROR_INVALID_PARAMETER;
     if(allowStoppedDns && luid) return ERROR_INVALID_PARAMETER;
+    DWORD addressError=addressRanges(p,addresses,addressCount); if(addressError) return addressError;
     p.luid=luid;
     for(UINT32 i=0;i<=count;i++) {
         const wchar_t* path=i ? excluded[i-1] : engine;
@@ -181,6 +227,20 @@ static DWORD build(Policy& p,UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* en
             number(FWPM_CONDITION_IP_REMOTE_PORT,FWP_UINT16,port),number(FWPM_CONDITION_IP_PROTOCOL,FWP_UINT8,IPPROTO_TCP)}});
     }
     for(size_t i=0;i<p.rules.size();i++) p.rules[i].slot=static_cast<unsigned>(i);
+    // LAN routes can be more specific than the TUN routes. These destination
+    // permits cover both direct LAN traffic and the engine's direct outbound.
+    // They never authorize unsolicited inbound traffic or direct port-53 DNS.
+    unsigned addressSlot=2048;
+    for(auto& range:p.addressRanges) for(auto protocol:{IPPROTO_TCP,IPPROTO_UDP}) {
+        FWPM_FILTER_CONDITION0 remote{};
+        remote.fieldKey=FWPM_CONDITION_IP_REMOTE_ADDRESS; remote.matchType=FWP_MATCH_EQUAL;
+        if(range.family==4) { remote.conditionValue.type=FWP_V4_ADDR_MASK; remote.conditionValue.v4AddrMask=&range.v4; }
+        else { remote.conditionValue.type=FWP_V6_ADDR_MASK; remote.conditionValue.v6AddrMask=&range.v6; }
+        auto remotePort=number(FWPM_CONDITION_IP_REMOTE_PORT,FWP_UINT16,range.port ? range.port : 53,
+            range.port ? FWP_MATCH_EQUAL : FWP_MATCH_NOT_EQUAL);
+        p.rules.push_back({range.family==4 ? FWPM_LAYER_ALE_AUTH_CONNECT_V4 : FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+            FWP_ACTION_PERMIT,100,{remote,remotePort,number(FWPM_CONDITION_IP_PROTOCOL,FWP_UINT8,protocol)},false,addressSlot++});
+    }
     if(allowStoppedDns && count) { DWORD e=stoppedDns(p); if(e) return e; }
     // Baseline is persistent. Active permissions have a separate key range
     // and MUST be installed through the process-owned dynamic session.
@@ -248,6 +308,10 @@ static bool valueEqual(const FWP_CONDITION_VALUE0& a,const FWP_CONDITION_VALUE0&
     case FWP_SECURITY_DESCRIPTOR_TYPE: return a.sd && b.sd && a.sd->size==b.sd->size &&
         (!a.sd->size || (a.sd->data && b.sd->data && !memcmp(a.sd->data,b.sd->data,a.sd->size)));
     case FWP_BYTE_ARRAY16_TYPE: return a.byteArray16 && b.byteArray16 && !memcmp(a.byteArray16,b.byteArray16,16);
+    case FWP_V4_ADDR_MASK: return a.v4AddrMask && b.v4AddrMask && a.v4AddrMask->addr==b.v4AddrMask->addr &&
+        a.v4AddrMask->mask==b.v4AddrMask->mask;
+    case FWP_V6_ADDR_MASK: return a.v6AddrMask && b.v6AddrMask && a.v6AddrMask->prefixLength==b.v6AddrMask->prefixLength &&
+        !memcmp(a.v6AddrMask->addr,b.v6AddrMask->addr,16);
     default: return false;
     }
 }
@@ -473,24 +537,24 @@ extern "C" __declspec(dllexport) DWORD __cdecl GuardRemove() {
         detail(L"remove/commit"); return transaction.commit();
     });
 }
-extern "C" __declspec(dllexport) DWORD __cdecl GuardConfigureV4(UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,BOOL allowStoppedDns,BOOL dryRun) {
+extern "C" __declspec(dllexport) DWORD __cdecl GuardConfigureV5(UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,const AddressExclusion* addresses,UINT32 addressCount,BOOL allowStoppedDns,BOOL dryRun) {
     return guarded([&]() -> DWORD {
         detail(L"configure/build");
-        Policy full{}; DWORD e=build(full,ip,port,luid,engine,excluded,count,allowStoppedDns!=FALSE); if(e) return e;
+        Policy full{}; DWORD e=build(full,ip,port,luid,engine,excluded,count,allowStoppedDns!=FALSE,addresses,addressCount); if(e) return e;
         if(dryRun) return dryRunShape(full);
         // Never retain permissions from a previous activation if the next
         // activation fails. The only intermediate state is a blocking baseline.
         e=deactivateLocked(); if(e) return e;
         if(!luid) return installBaseline(full);
-        Policy baseline{}; e=build(baseline,ip,port,0,engine,excluded,count); if(e) return e;
+        Policy baseline{}; e=build(baseline,ip,port,0,engine,excluded,count,false,addresses,addressCount); if(e) return e;
         e=installBaseline(baseline); if(e) return e;
         return activate(full);
     });
 }
-extern "C" __declspec(dllexport) DWORD __cdecl GuardMatchesV4(UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,BOOL allowStoppedDns,BOOL* matches) {
+extern "C" __declspec(dllexport) DWORD __cdecl GuardMatchesV5(UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,const AddressExclusion* addresses,UINT32 addressCount,BOOL allowStoppedDns,BOOL* matches) {
     return guarded([&]() -> DWORD {
         detail(L"matches/build"); if(!matches) return ERROR_INVALID_PARAMETER; *matches=FALSE;
-        Policy p{}; DWORD e=build(p,ip,port,luid,engine,excluded,count,allowStoppedDns!=FALSE); if(e) return e;
+        Policy p{}; DWORD e=build(p,ip,port,luid,engine,excluded,count,allowStoppedDns!=FALSE,addresses,addressCount); if(e) return e;
         if(luid) {
             if(!activeSession.handle || activeSession.luid!=luid) return ERROR_SUCCESS;
             size_t activeCount=0;
@@ -512,6 +576,12 @@ extern "C" __declspec(dllexport) DWORD __cdecl GuardMatchesV4(UINT32 ip,UINT16 p
         if(!e) *matches=equal ? TRUE : FALSE;
         return e;
     });
+}
+extern "C" __declspec(dllexport) DWORD __cdecl GuardConfigureV4(UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,BOOL allowStoppedDns,BOOL dryRun) {
+    return GuardConfigureV5(ip,port,luid,engine,excluded,count,nullptr,0,allowStoppedDns,dryRun);
+}
+extern "C" __declspec(dllexport) DWORD __cdecl GuardMatchesV4(UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,BOOL allowStoppedDns,BOOL* matches) {
+    return GuardMatchesV5(ip,port,luid,engine,excluded,count,nullptr,0,allowStoppedDns,matches);
 }
 extern "C" __declspec(dllexport) DWORD __cdecl GuardConfigureV3(UINT32 ip,UINT16 port,UINT64 luid,const wchar_t* engine,const wchar_t* const* excluded,UINT32 count,BOOL dryRun) {
     return GuardConfigureV4(ip,port,luid,engine,excluded,count,FALSE,dryRun);

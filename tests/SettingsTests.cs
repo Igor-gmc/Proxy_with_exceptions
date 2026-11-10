@@ -40,6 +40,7 @@ internal static class SettingsTests
             var defaults = Settings.Default;
             Require(defaults.Host == "" && defaults.Username == "" && defaults.Password == "");
             Require(defaults.ExcludedApplications.Length == 0);
+            Require(defaults.ExcludedAddresses.Length == 0);
             Require(defaults.Port is >= 1 and <= 65535 && (defaults.Protocol is "http" or "socks"));
             Require(!Directory.Exists(Settings.DataDir));
         });
@@ -49,6 +50,7 @@ internal static class SettingsTests
             var loaded = Settings.Load();
             Require(loaded.Host == "" && loaded.Username == "" && loaded.Password == "");
             Require(loaded.ExcludedApplications.Length == 0);
+            Require(loaded.ExcludedAddresses.Length == 0);
             Require(loaded.Port == Settings.Default.Port && loaded.Protocol == Settings.Default.Protocol);
             Require(!File.Exists(Path.Combine(Settings.DataDir, "settings.dat")));
             Require(!File.Exists(Path.Combine(Settings.DataDir, "settings.dat.tmp")));
@@ -69,7 +71,11 @@ internal static class SettingsTests
         var s = new Settings("192.0.2.10", 1080, "qa-user", testPassword, "http");
         string app = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "notepad.exe");
         var excluded = s with { ExcludedApplications = [app] };
-        var multiple = s with { ExcludedApplications = [@"C:\Program Files\Mozilla Firefox\firefox.exe", @"C:\Users\Тест\AppData\Local\Yandex Music\Яндекс Музыка.exe"] };
+        var multiple = s with
+        {
+            ExcludedApplications = [@"C:\Program Files\Mozilla Firefox\firefox.exe", @"C:\Users\Тест\AppData\Local\Yandex Music\Яндекс Музыка.exe"],
+            ExcludedAddresses = ["192.168.1.0/24", "192.168.2.1:8080", "[fd00::1234/64]:8443"]
+        };
         async Task SettingsTest(string name, Action test)
         {
             await Test(name, () =>
@@ -90,6 +96,8 @@ internal static class SettingsTests
             Require(loaded.Host == multiple.Host && loaded.Port == multiple.Port && loaded.Protocol == multiple.Protocol);
             Require(loaded.Username == multiple.Username && loaded.Password == multiple.Password);
             Require(loaded.ExcludedApplications.SequenceEqual(multiple.ExcludedApplications));
+            Require(loaded.ExcludedAddresses.SequenceEqual(multiple.ExcludedAddresses));
+            Require(loaded.ExcludedAddresses.Contains("[fd00::/64]:8443"));
             byte[] bytes = File.ReadAllBytes(Path.Combine(Settings.DataDir, "settings.dat"));
             Require(!System.Text.Encoding.UTF8.GetString(bytes).Contains(s.Password, StringComparison.Ordinal));
             Require(!File.Exists(Path.Combine(Settings.DataDir, "settings.dat.tmp")));
@@ -107,6 +115,7 @@ internal static class SettingsTests
             Require(rejected && File.ReadAllBytes(path).SequenceEqual(corrupt));
             multiple.Save();
             Require(Settings.Load().ExcludedApplications.SequenceEqual(multiple.ExcludedApplications));
+            Require(Settings.Load().ExcludedAddresses.SequenceEqual(multiple.ExcludedAddresses));
         });
         await SettingsTest("failed settings replacement preserves last saved data; retry succeeds", () =>
         {
@@ -122,8 +131,10 @@ internal static class SettingsTests
             }
             Require(rejected && File.ReadAllBytes(path).SequenceEqual(before));
             Require(Settings.Load().ExcludedApplications.Length == 0);
+            Require(Settings.Load().ExcludedAddresses.Length == 0);
             multiple.Save();
             Require(Settings.Load().ExcludedApplications.SequenceEqual(multiple.ExcludedApplications));
+            Require(Settings.Load().ExcludedAddresses.SequenceEqual(multiple.ExcludedAddresses));
             Require(!File.Exists(path + ".tmp"));
         });
         await SettingsTest("settings test directories isolate persisted state", () =>
@@ -142,10 +153,36 @@ internal static class SettingsTests
             var loaded = JsonSerializer.Deserialize<Settings>(legacy)!;
             loaded.Validate();
             Require(loaded.ExcludedApplications.Length == 0);
+            Require(loaded.ExcludedAddresses.Length == 0);
             var roundtrip = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(excluded))!;
             roundtrip.Validate();
             Require(roundtrip.ExcludedApplications.SequenceEqual(excluded.ExcludedApplications));
+            string previousVersion = JsonSerializer.Serialize(new
+            {
+                s.Host, s.Port, s.Username, s.Password, s.Protocol,
+                ExcludedApplications = excluded.ExcludedApplications,
+                ActivityLoggingEnabled = false
+            });
+            var previous = JsonSerializer.Deserialize<Settings>(previousVersion)!;
+            previous.Validate();
+            Require(previous.ExcludedAddresses.Length == 0 && !previous.ActivityLoggingEnabled);
+            Require(previous.ExcludedApplications.SequenceEqual(excluded.ExcludedApplications));
+            var mixed = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(multiple))!;
+            mixed.Validate();
+            Require(mixed.ExcludedAddresses.SequenceEqual(multiple.ExcludedAddresses));
+            Require(mixed.ExcludedApplications.SequenceEqual(multiple.ExcludedApplications));
             return Task.CompletedTask;
+        });
+        await SettingsTest("address-only settings persist removal without altering proxy or EXE settings", () =>
+        {
+            multiple.Save();
+            var removed = Settings.Load() with { ExcludedAddresses = [] };
+            removed.Save();
+            var loaded = Settings.Load();
+            Require(loaded.ExcludedAddresses.Length == 0);
+            Require(loaded.ExcludedApplications.SequenceEqual(multiple.ExcludedApplications));
+            Require(loaded.Host == multiple.Host && loaded.Port == multiple.Port && loaded.Protocol == multiple.Protocol);
+            Require(loaded.Username == multiple.Username && loaded.Password == multiple.Password);
         });
         await Test("invalid endpoints/exclusions rejected; paths normalized and deduplicated", () =>
         {

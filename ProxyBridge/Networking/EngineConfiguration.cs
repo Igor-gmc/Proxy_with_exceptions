@@ -75,7 +75,7 @@ internal static class EngineConfiguration
                 password = settings.Password
             }
         };
-        if (settings.ExcludedApplications.Length > 0)
+        if (settings.ExcludedApplications.Length > 0 || settings.ExcludedAddresses.Length > 0)
         {
             outbounds.Add(new
             {
@@ -120,6 +120,46 @@ internal static class EngineConfiguration
                 process_path = settings.ExcludedApplications,
                 action = "route",
                 outbound = "direct"
+            });
+        }
+
+        foreach (string value in settings.ExcludedAddresses)
+        {
+            var address = AddressExclusion.Parse(value);
+            var match = new Dictionary<string, object>
+            {
+                ["network"] = new[] { "tcp", "udp" },
+                ["ip_cidr"] = new[] { address.Cidr }
+            };
+            if (address.Port is int port)
+            {
+                match["port"] = port;
+            }
+
+            if (address.IsIPv6)
+            {
+                rules.Add(new
+                {
+                    type = "logical",
+                    mode = "and",
+                    rules = new object[]
+                    {
+                        match,
+                        new { ip_version = 6, ip_cidr = new[] { "2000::/3" } },
+                        new { default_interface_address = new[] { "0.0.0.0/0" } },
+                        new { default_interface_address = new[] { "2000::/3" }, invert = true },
+                        new { default_interface_address = new[] { "fc00::/7" }, invert = true }
+                    },
+                    action = "reject",
+                    method = "default",
+                    no_drop = true
+                });
+            }
+
+            rules.Add(new Dictionary<string, object>(match)
+            {
+                ["action"] = "route",
+                ["outbound"] = "direct"
             });
         }
 

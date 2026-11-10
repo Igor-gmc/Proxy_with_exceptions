@@ -53,6 +53,7 @@ await ProtectionControllerTests.RunAsync(Test, settings);
 await ConnectionProbeTests.RunAsync(Test);
 await ConfigurationTests.RunAsync(Test);
 await DirectIpv6PolicyTests.RunAsync(Test);
+await AddressExclusionTests.RunAsync(Test);
 await ConfigurationParityTests.RunAsync(Test);
 await ApplicationCommandTests.RunAsync(Test);
 await ShippingAssemblyTests.RunAsync(Test);

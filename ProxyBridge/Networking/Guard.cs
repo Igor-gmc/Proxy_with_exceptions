@@ -24,13 +24,16 @@ internal static class Guard
     public static void Configure(Settings s, ulong luid = 0, bool dryRun = false, bool allowStoppedDns = false)
     {
         uint proxyAddress = ToNativeProxyAddress(s);
-        Check(NativeMethods.GuardConfigureV4(
+        NativeAddressExclusion[] addresses = ToNativeAddressExclusions(s);
+        Check(NativeMethods.GuardConfigureV5(
             proxyAddress,
             checked((ushort)s.Port),
             luid,
             Engine.Executable,
             s.ExcludedApplications,
             checked((uint)s.ExcludedApplications.Length),
+            addresses,
+            checked((uint)addresses.Length),
             allowStoppedDns,
             dryRun));
     }
@@ -38,13 +41,16 @@ internal static class Guard
     public static bool IsConfigured(Settings s, ulong luid = 0, bool allowStoppedDns = false)
     {
         uint proxyAddress = ToNativeProxyAddress(s);
-        Check(NativeMethods.GuardMatchesV4(
+        NativeAddressExclusion[] addresses = ToNativeAddressExclusions(s);
+        Check(NativeMethods.GuardMatchesV5(
             proxyAddress,
             checked((ushort)s.Port),
             luid,
             Engine.Executable,
             s.ExcludedApplications,
             checked((uint)s.ExcludedApplications.Length),
+            addresses,
+            checked((uint)addresses.Length),
             allowStoppedDns,
             out bool matches));
         return matches;
@@ -159,6 +165,32 @@ internal static class Guard
             | addressBytes[3];
     }
 
+    private static NativeAddressExclusion[] ToNativeAddressExclusions(Settings settings) =>
+        settings.ExcludedAddresses.Select(value =>
+        {
+            AddressExclusion parsed = AddressExclusion.Parse(value);
+            byte[] bytes = new byte[16];
+            parsed.Address.GetAddressBytes().CopyTo(bytes, 0);
+            return new NativeAddressExclusion
+            {
+                Family = parsed.IsIPv6 ? 6u : 4u,
+                PrefixLength = checked((uint)parsed.PrefixLength),
+                Port = checked((uint)(parsed.Port ?? 0)),
+                Address = bytes
+            };
+        }).ToArray();
+
+    // Matches native AddressExclusion exactly, including its 28-byte stride.
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    internal struct NativeAddressExclusion
+    {
+        public uint Family;
+        public uint PrefixLength;
+        public uint Port;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        public byte[] Address;
+    }
+
     private static void Check(uint error)
     {
         if (error == 0)
@@ -173,24 +205,28 @@ internal static class Guard
     private static class NativeMethods
     {
         [DllImport("ProxyGuard.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-        internal static extern uint GuardConfigureV4(
+        internal static extern uint GuardConfigureV5(
             uint ip,
             ushort port,
             ulong luid,
             string engine,
             [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 5)] string[] excluded,
             uint count,
+            [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 7)] NativeAddressExclusion[] addresses,
+            uint addressCount,
             [MarshalAs(UnmanagedType.Bool)] bool allowStoppedDns,
             [MarshalAs(UnmanagedType.Bool)] bool dryRun);
 
         [DllImport("ProxyGuard.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-        internal static extern uint GuardMatchesV4(
+        internal static extern uint GuardMatchesV5(
             uint ip,
             ushort port,
             ulong luid,
             string engine,
             [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 5)] string[] excluded,
             uint count,
+            [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 7)] NativeAddressExclusion[] addresses,
+            uint addressCount,
             [MarshalAs(UnmanagedType.Bool)] bool allowStoppedDns,
             [MarshalAs(UnmanagedType.Bool)] out bool matches);
 

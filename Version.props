@@ -3,8 +3,8 @@
        reset Patch when Minor changes. Rebuilding the same release keeps its version. -->
   <PropertyGroup>
     <ProxyBridgeMajor>0</ProxyBridgeMajor>
-    <ProxyBridgeMinor>3</ProxyBridgeMinor>
-    <ProxyBridgePatch>6</ProxyBridgePatch>
+    <ProxyBridgeMinor>4</ProxyBridgeMinor>
+    <ProxyBridgePatch>0</ProxyBridgePatch>
     <Version>$(ProxyBridgeMajor).$(ProxyBridgeMinor).$(ProxyBridgePatch)</Version>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <FileVersion>$(AssemblyVersion)</FileVersion>

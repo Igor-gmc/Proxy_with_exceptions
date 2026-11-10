@@ -11,7 +11,7 @@ internal sealed partial class MainForm
     readonly Label connectionSummary = AppTheme.Label("", 9.5f, false, AppTheme.Muted);
     readonly Label exclusionCount = AppTheme.Label("", 10, true);
     readonly Label unsavedChanges = AppTheme.Label("Есть несохранённые изменения", 9.5f, false, AppTheme.Amber);
-    readonly Label exclusionPath = AppTheme.Label("Выберите приложение, чтобы увидеть полный путь.", 9, false, AppTheme.Muted);
+    readonly Label exclusionPath = AppTheme.Label("Выберите исключение, чтобы увидеть подробности.", 9, false, AppTheme.Muted);
     readonly Panel pageHost = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
     readonly Button exitApplication = new ThemeButton() { Text = "Выход" };
     TableLayoutPanel shell = null!, contentLayout = null!, overviewLayout = null!;
@@ -260,7 +260,7 @@ internal sealed partial class MainForm
         actionCards.Controls.Add(actions);
         overviewLayout.Controls.Add(actionCards, 0, 0);
         hints.SetToolTip(connect, "Подключиться с сохранением защиты остальных приложений. Результат проверки появится в журнале.");
-        hints.SetToolTip(block, "Остановить прокси и сохранить блокировку. Приложения из исключений остаются разрешены.");
+        hints.SetToolTip(block, "Остановить прокси и сохранить блокировку. Приложения и адреса из исключений остаются разрешены.");
         hints.SetToolTip(release, "Явно снять защиту ProxyBridge и вернуть обычный доступ в интернет.");
         var journalHeader = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
         var journalTitle = AppTheme.Label("Журнал событий", 11, true);
@@ -477,7 +477,7 @@ internal sealed partial class MainForm
         rows.RowStyles.Add(new(SizeType.Percent, 100));
         rows.RowStyles.Add(new(SizeType.Absolute, 34));
         rows.RowStyles.Add(new(SizeType.Absolute, 48));
-        rows.Controls.Add(AppTheme.Label("Выбранные приложения выходят напрямую, даже при остановке прокси.\nОбщий DNS остаётся через прокси: для автономной работы Firefox нужен собственный DNS через HTTPS (DoH).\nПосле изменения списка нажмите «Сохранить / применить».", 9.5f, false, AppTheme.Muted), 0, 0);
+        rows.Controls.Add(AppTheme.Label("Приложения и адреса из списка доступны напрямую, даже при остановке прокси.\nПри подключении DNS остаётся через прокси; порт 53 не исключается.\nПосле изменения списка нажмите «Сохранить / применить».", 9.5f, false, AppTheme.Muted), 0, 0);
         exclusionCount.Name = "exclusionCount";
         rows.Controls.Add(exclusionCount, 0, 1);
         exclusions.Name = "exclusions";
@@ -488,12 +488,12 @@ internal sealed partial class MainForm
         exclusions.ItemHeight = 56;
         exclusions.IntegralHeight = false;
         exclusions.HorizontalScrollbar = false;
-        exclusions.AccessibleName = "Приложения с прямым доступом";
+        exclusions.AccessibleName = "Приложения и адреса с прямым доступом";
         exclusions.TabIndex = 0;
         exclusions.DrawItem += DrawExcludedApplication;
         exclusions.SelectedIndexChanged += (_, _) =>
         {
-            string path = exclusions.SelectedItem as string ?? "Выберите приложение, чтобы увидеть полный путь.";
+            string path = exclusions.SelectedItem as string ?? "Выберите исключение, чтобы увидеть подробности.";
             exclusionPath.Text = path;
             hints.SetToolTip(exclusionPath, path);
             hints.SetToolTip(exclusions, path);
@@ -508,13 +508,16 @@ internal sealed partial class MainForm
         rows.Controls.Add(exclusionPath, 0, 3);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty, Padding = new Padding(0, 6, 0, 0) };
         StyleAction(addExclusion, "addExclusion", 170);
+        StyleAction(addAddressExclusion, "addAddressExclusion", 176);
         StyleAction(removeExclusion, "removeExclusion", 108);
         addExclusion.TabIndex = 1;
-        removeExclusion.TabIndex = 2;
-        buttons.Controls.AddRange([addExclusion, removeExclusion]);
+        addAddressExclusion.TabIndex = 2;
+        removeExclusion.TabIndex = 3;
+        buttons.Controls.AddRange([addExclusion, addAddressExclusion, removeExclusion]);
         rows.Controls.Add(buttons, 0, 4);
         hints.SetToolTip(addExclusion, "Выберите EXE. Для программы с отдельными вспомогательными процессами могут понадобиться дополнительные EXE.");
-        hints.SetToolTip(removeExclusion, "Удалить выбранный EXE из списка. Затем нажмите «Сохранить / применить».");
+        hints.SetToolTip(addAddressExclusion, "Добавить IP-адрес или подсеть, например 192.168.1.0/24. Порт можно указать отдельно.");
+        hints.SetToolTip(removeExclusion, "Удалить выбранное исключение из списка. Затем нажмите «Сохранить / применить».");
         return rows;
     }
 
@@ -529,12 +532,17 @@ internal sealed partial class MainForm
         using var background = new SolidBrush(selected ? AppTheme.Selection : AppTheme.Input);
         e.Graphics.FillRectangle(background, e.Bounds);
         string path = (string)exclusions.Items[e.Index];
+        bool isAddress = AddressExclusion.TryParse(path, out var address);
         var title = new Rectangle(e.Bounds.X + 12, e.Bounds.Y + 7, e.Bounds.Width - 24, 22);
         var detail = new Rectangle(e.Bounds.X + 12, e.Bounds.Y + 31, e.Bounds.Width - 24, 19);
         Color titleColor = SystemInformation.HighContrast && selected ? SystemColors.HighlightText : AppTheme.Text;
         Color detailColor = SystemInformation.HighContrast && selected ? SystemColors.HighlightText : AppTheme.Muted;
-        TextRenderer.DrawText(e.Graphics, Path.GetFileName(path), Font, title, titleColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-        TextRenderer.DrawText(e.Graphics, path, exclusionPath.Font, detail, detailColor, TextFormatFlags.PathEllipsis | TextFormatFlags.NoPrefix);
+        string titleText = isAddress ? path : Path.GetFileName(path);
+        string detailText = isAddress
+            ? address!.Port is int port ? $"Адрес / подсеть · TCP и UDP · порт {port}" : "Адрес / подсеть · TCP и UDP · все порты, кроме DNS (53)"
+            : path;
+        TextRenderer.DrawText(e.Graphics, titleText, Font, title, titleColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        TextRenderer.DrawText(e.Graphics, detailText, exclusionPath.Font, detail, detailColor, TextFormatFlags.PathEllipsis | TextFormatFlags.NoPrefix);
         if ((e.State & DrawItemState.Focus) != 0)
         {
             e.DrawFocusRectangle();
@@ -661,13 +669,14 @@ internal sealed partial class MainForm
     }
     void RefreshOverviewSummary()
     {
-        connectionSummary.Text = $"Сохранённый прокси: {settings.Host}:{settings.Port}  ·  Исключений: {settings.ExcludedApplications.Length} EXE";
-        exclusionCount.Text = $"Приложения в списке: {exclusions.Items.Count} EXE";
+        connectionSummary.Text = $"Сохранённый прокси: {settings.Host}:{settings.Port}  ·  EXE: {settings.ExcludedApplications.Length} · Адресов: {settings.ExcludedAddresses.Length}";
+        exclusionCount.Text = $"В списке: {ExcludedApplicationItems().Length} EXE · Адресов и подсетей: {ExcludedAddressItems().Length}";
         bool changed = host.Text.Trim() != settings.Host ||
             !int.TryParse(port.Text, out int enteredPort) || enteredPort != settings.Port ||
             username.Text != settings.Username || password.Text != settings.Password ||
             protocol.SelectedIndex != (settings.Protocol == "http" ? 0 : 1) ||
-            !exclusions.Items.Cast<string>().SequenceEqual(settings.ExcludedApplications, StringComparer.OrdinalIgnoreCase);
+            !ExcludedApplicationItems().SequenceEqual(settings.ExcludedApplications, StringComparer.OrdinalIgnoreCase) ||
+            !ExcludedAddressItems().SequenceEqual(settings.ExcludedAddresses, StringComparer.Ordinal);
         unsavedChanges.Visible = changed;
     }
     void RefreshLayoutStatus()

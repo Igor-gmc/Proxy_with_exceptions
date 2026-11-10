@@ -22,6 +22,7 @@ internal sealed partial class MainForm : Form
     readonly Button release = new ThemeButton() { Text = "Отключить и вернуть интернет", AutoSize = true };
     readonly ListBox exclusions = new() { Dock = DockStyle.Fill, HorizontalScrollbar = true };
     readonly Button addExclusion = new ThemeButton() { Text = "Добавить EXE…", AutoSize = true };
+    readonly Button addAddressExclusion = new ThemeButton() { Text = "Добавить адрес…", AutoSize = true };
     readonly Button removeExclusion = new ThemeButton() { Text = "Удалить", AutoSize = true };
     readonly CheckBox autoStart = new() { Text = "Запускать при входе в Windows", AutoSize = true };
     readonly Button speed = new ThemeButton() { Text = "Тест скорости", AutoSize = true };
@@ -243,7 +244,7 @@ internal sealed partial class MainForm : Form
             if (initialSettingsReady && protection.IsExpectedPolicy())
             {
                 CacheDiagnosticContext("startup.policy-verified", true);
-                SetStatus("Политика блокировки подтверждена · приложения из исключений разрешены");
+                SetStatus("Политика блокировки подтверждена · исключения разрешены");
             }
             else
             {
@@ -351,6 +352,6 @@ internal sealed partial class MainForm : Form
         controlsDisabled = !enabled;
         connect.Enabled = apply.Enabled = block.Enabled = release.Enabled = speed.Enabled = enabled;
         host.Enabled = port.Enabled = username.Enabled = password.Enabled = protocol.Enabled = enabled;
-        exclusions.Enabled = addExclusion.Enabled = removeExclusion.Enabled = autoStart.Enabled = enabled;
+        exclusions.Enabled = addExclusion.Enabled = addAddressExclusion.Enabled = removeExclusion.Enabled = autoStart.Enabled = enabled;
     }
 }

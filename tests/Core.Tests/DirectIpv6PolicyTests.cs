@@ -9,7 +9,7 @@ internal static class DirectIpv6PolicyTests
     const string Excluded = @"C:\QA Apps\browser.exe";
     const string Other = @"C:\QA Apps\other.exe";
 
-    sealed record Flow(string Process, string Destination, string[] DefaultAddresses,
+    internal sealed record Flow(string Process, string Destination, string[] DefaultAddresses,
         int Port = 443, string Network = "tcp");
 
     static void Require(bool condition, string message)
@@ -122,7 +122,7 @@ internal static class DirectIpv6PolicyTests
     // Independent, deliberately small policy interpreter for synthetic flows.
     // It validates generated rule decisions, not OS connectivity or sing-box's
     // implementation; real-engine parsing/runtime validation is a separate check.
-    static string Route(JsonNode config, Flow flow)
+    internal static string Route(JsonNode config, Flow flow)
     {
         foreach (var rule in config["route"]!["rules"]!.AsArray())
         {
@@ -155,7 +155,9 @@ internal static class DirectIpv6PolicyTests
                 "ip_cidr" => value!.AsArray().Any(prefix => Contains(prefix!.GetValue<string>(), flow.Destination)),
                 "default_interface_address" => value!.AsArray().All(prefix => flow.DefaultAddresses.Any(address => Contains(prefix!.GetValue<string>(), address))),
                 "port" => value!.GetValue<int>() == flow.Port,
-                "network" => value!.GetValue<string>() == flow.Network,
+                "network" => value is JsonArray networks
+                    ? networks.Any(network => network!.GetValue<string>() == flow.Network)
+                    : value!.GetValue<string>() == flow.Network,
                 _ => throw new InvalidOperationException("Unsupported rule field in policy test: " + key)
             };
         }

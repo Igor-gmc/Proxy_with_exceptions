@@ -2,6 +2,7 @@
   <Project Path="ProxyBridge/ProxyBridge.csproj" />
   <Folder Name="/Tests/">
     <Project Path="tests/Core.Tests/Core.Tests.csproj" />
+    <Project Path="tests/GuardAbi.Tests/GuardAbi.Tests.csproj" />
     <Project Path="tests/Settings.Tests/Settings.Tests.csproj" />
     <Project Path="tests/Logging.Tests/Logging.Tests.csproj" />
     <Project Path="tests/Activity.Tests/Activity.Tests.csproj" />

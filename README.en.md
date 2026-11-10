@@ -3,16 +3,20 @@
 [Русский](README.md) | **English**
 
 A Windows application that routes connections through an HTTP CONNECT or SOCKS5
-proxy, with exceptions for individual applications. It uses sing-box, a Wintun
-virtual adapter, and its own Windows Filtering Platform (WFP) module.
+proxy, with exceptions for applications, IP addresses and subnets. It uses
+sing-box, a Wintun virtual adapter, and its own Windows Filtering Platform
+(WFP) module.
 
-Version: **0.3.05**, a release candidate following the refactor. Requires
+Version: **0.4.00**. Requires
 Windows 10/11 x64 and administrator privileges to run.
 
 ## Features
 
 - TCP routing through a proxy configured by the user.
 - Application exceptions identified by their full EXE paths, allowing direct access.
+- IP/CIDR exceptions with an optional port, such as `192.168.1.0/24` or
+  `192.168.1.10:8080`. Direct TCP/UDP to these destinations is permitted for
+  all applications except DNS port 53. Address exceptions do not enable stopped DNS.
 - A kill switch with separate actions for stopping while blocking traffic and restoring internet access.
 - Startup at Windows sign-in, a system tray icon, and a speed test.
 - Local connection and activity logs, with TCP and WFP diagnostics.
@@ -28,11 +32,11 @@ name. SOCKS5 is used for TCP; unsupported UDP is intended to remain blocked.
 The application currently uses Russian interface labels. Their English meanings
 are included below to help you find the controls.
 
-1. Build the application as described below and run `ProxyBridge-0.3.05.exe`.
+1. Build the application as described below and run `ProxyBridge-0.4.00.exe`.
 2. On «Прокси» (Proxy), enter the address, port, protocol, and credentials if required.
 3. Click «Сохранить / применить» (Save / apply), then «Подключить» (Connect).
 4. Wait for a successful connection check on «Обзор» (Overview).
-5. If needed, add EXE files under «Исключения» (Exceptions) and apply the changes.
+5. If needed, add EXE files or addresses under «Исключения» (Exceptions) and apply the changes.
 
 Once a valid profile has been saved, subsequent normal launches automatically
 attempt to connect. Closing the window hides it in the system tray without a
@@ -46,6 +50,33 @@ Exceptions intentionally allow direct access, including while the proxy is
 stopped. When manually stopping with application exceptions configured, system
 DNS access to the active adapters' resolvers may also be allowed. See
 [HELP.txt](HELP.txt) for details (Russian).
+
+## Address and subnet exceptions
+
+Open «Исключения» (Exceptions) → «Добавить адрес…» (Add address), enter an
+IP address or subnet and an optional port. Click «Добавить» (Add), then
+«Сохранить / применить» (Save / apply). Specify the port either in the address
+entry or in the separate port field.
+
+| Entry | Direct access |
+| --- | --- |
+| `192.168.1.0/24` | Subnet `192.168.1.0–192.168.1.255`, all ports except 53 |
+| `192.168.1.10` | One IP address, all ports except 53 |
+| `192.168.1.10:8080` | One IP address, port 8080 only |
+| `192.168.1.0/24:443` | Subnet, port 443 only |
+| `[fd00::10]:8080` | IPv6 address, port 8080 only |
+| `[fd00::/64]:443` | IPv6 subnet, port 443 only |
+
+Address rules allow outbound TCP/UDP connections for all applications,
+including while the proxy is stopped and the kill switch remains enabled.
+Other destinations retain their existing policy. These rules do not permit
+ICMP, such as ping. DNS port 53 is excluded from address exceptions; an explicit
+`:53` is rejected. Domain names and URLs are not supported.
+
+Up to 64 address rules can be saved separately from EXE exceptions. Subnets
+are normalized: `192.168.1.42/24` becomes `192.168.1.0/24`; duplicate entries
+are removed. New profiles have no address exceptions. Older profiles retain
+their existing settings and load with an empty address list.
 
 ## Network protection status
 

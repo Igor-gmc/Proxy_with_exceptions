@@ -20,6 +20,7 @@ def main():
     if not isinstance(denied, list) or any(not isinstance(s, str) or not s for s in denied):
         parser.error('Denylist must be an array of nonempty strings')
     roots = {'ProxyBridge', 'native', 'tests', 'integration', 'tools', 'licenses'}
+    published_docs = {'docs/IPV6-DIRECT.md'}
     root_files = {'.gitignore', '.gitattributes', '.editorconfig', 'ProxyBridge.slnx',
                   'ARCHITECTURE.md', 'README.md', 'README.en.md', 'README.txt', 'HELP.txt',
                   'CHANGELOG.md', 'THIRD-PARTY.txt', 'SECURITY.md', 'Version.props',
@@ -53,7 +54,7 @@ def main():
         if mode not in ('100644', '100755') or stage != '0':
             fail('unsupported file mode or unresolved index'); continue
         lower_parts = [part.lower() for part in path.parts]
-        if ((len(path.parts) == 1 and name not in root_files)
+        if name not in published_docs and ((len(path.parts) == 1 and name not in root_files)
                 or (len(path.parts) > 1 and path.parts[0] not in roots)):
             fail('path outside publication allowlist')
         if any(p in forbidden_parts or '.env' in p or 'secret' in p or 'credential' in p

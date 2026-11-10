@@ -8,6 +8,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #pragma comment(lib, "ole32.lib")
 
 namespace audit {
@@ -55,6 +56,19 @@ template<class V> static void value(Bytes& bytes, const V& v) {
     case FWP_BYTE_ARRAY16_TYPE:
         require(v.byteArray16 != nullptr, "invalid IPv6 address in snapshot");
         for (auto b : v.byteArray16->byteArray16) put(bytes, b);
+        break;
+    case FWP_V4_ADDR_MASK:
+        if constexpr (std::is_same_v<V, FWP_CONDITION_VALUE0>) {
+            require(v.v4AddrMask != nullptr, "invalid IPv4 mask in snapshot");
+            put(bytes, v.v4AddrMask->addr); put(bytes, v.v4AddrMask->mask);
+        } else throw std::runtime_error("address mask is invalid as a filter weight");
+        break;
+    case FWP_V6_ADDR_MASK:
+        if constexpr (std::is_same_v<V, FWP_CONDITION_VALUE0>) {
+            require(v.v6AddrMask != nullptr, "invalid IPv6 mask in snapshot");
+            for (auto b : v.v6AddrMask->addr) put(bytes, b);
+            put(bytes, v.v6AddrMask->prefixLength);
+        } else throw std::runtime_error("address mask is invalid as a filter weight");
         break;
     default: throw std::runtime_error("unsupported policy value type; write transaction not permitted");
     }
