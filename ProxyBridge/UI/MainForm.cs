@@ -9,11 +9,11 @@ internal sealed partial class MainForm : Form
     readonly TextBox username = new();
     readonly TextBox password = new() { UseSystemPasswordChar = true };
     readonly ComboBox protocol = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    readonly Label status = new() { AutoSize = true, ForeColor = Color.SteelBlue, Text = "Готово к подключению" };
+    readonly Label status = new() { AutoSize = true, ForeColor = AppTheme.Text, Text = "Готово к подключению" };
     readonly TextBox log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     readonly TextBox userLogNote = new() { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, WordWrap = true };
     readonly Button writeLogNote = new ThemeButton() { Text = "Записать в лог" };
-    readonly CheckBox activityLogging = new() { AutoSize = true };
+    readonly CheckBox activityLogging = new ThemeCheckBox() { AutoSize = true };
     readonly Button openActivityLog = new ThemeButton() { Text = "Открыть журнал" };
     readonly Label activityStatus = new() { AutoSize = false, AutoEllipsis = true };
     readonly Button connect = new ThemeButton() { Text = "Подключить", AutoSize = true };
@@ -24,7 +24,7 @@ internal sealed partial class MainForm : Form
     readonly Button addExclusion = new ThemeButton() { Text = "Добавить EXE…", AutoSize = true };
     readonly Button addAddressExclusion = new ThemeButton() { Text = "Добавить адрес…", AutoSize = true };
     readonly Button removeExclusion = new ThemeButton() { Text = "Удалить", AutoSize = true };
-    readonly CheckBox autoStart = new() { Text = "Запускать при входе в Windows", AutoSize = true };
+    readonly CheckBox autoStart = new ThemeCheckBox() { Text = "Запускать при входе в Windows", AutoSize = true };
     readonly Button speed = new ThemeButton() { Text = "Тест скорости", AutoSize = true };
     readonly Button cancelSpeed = new ThemeButton() { Text = "Отменить тест", AutoSize = true, Enabled = false };
     readonly StatusIcons statusIcons = new();

@@ -5,16 +5,22 @@ internal sealed partial class MainForm
     readonly Dictionary<string, Control> pages = new(StringComparer.Ordinal);
     readonly Dictionary<string, Button> navigation = new(StringComparer.Ordinal);
     readonly ToolTip hints = new() { AutoPopDelay = 15000, InitialDelay = 450, ReshowDelay = 150 };
-    readonly Label pageTitle = AppTheme.Label("Обзор", 20);
-    readonly Label stateBadge = AppTheme.Label("P · Пауза", 20, true);
+    // Type scale (Apple-style roles): page 18, status 15, section 11 Semibold,
+    // body 10, caption 9 Muted, journal 9.5 monospace.
+    readonly Label pageTitle = AppTheme.Label("Обзор", 18, true);
+    readonly Label stateBadge = AppTheme.Label("P · Пауза", 15, true);
     readonly Panel stateDot = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
-    readonly Label connectionSummary = AppTheme.Label("", 9.5f, false, AppTheme.Muted);
+    readonly Label connectionSummary = AppTheme.Label("", 9, false, AppTheme.Muted);
+    readonly Label inlineSummary = AppTheme.Label("", 9, false, AppTheme.Muted);
     readonly Label exclusionCount = AppTheme.Label("", 10, true);
-    readonly Label unsavedChanges = AppTheme.Label("Есть несохранённые изменения", 9.5f, false, AppTheme.Amber);
+    readonly Label unsavedChanges = AppTheme.Label("Есть несохранённые изменения", 9, false, AppTheme.Amber);
     readonly Label exclusionPath = AppTheme.Label("Выберите исключение, чтобы увидеть подробности.", 9, false, AppTheme.Muted);
     readonly Panel pageHost = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
     readonly Button exitApplication = new ThemeButton() { Text = "Выход" };
-    TableLayoutPanel shell = null!, contentLayout = null!, overviewLayout = null!;
+    readonly Font stateFontFull = AppTheme.Font(15, true), stateFontSlim = AppTheme.Font(11, true);
+    TableLayoutPanel shell = null!, contentLayout = null!, overviewLayout = null!, statusRows = null!, stateLine = null!;
+    ThemeCard statusCard = null!;
+    readonly Font navigationFont = AppTheme.Font(10), navigationFontSelected = AppTheme.Font(10, true);
     Panel sidebar = null!, actionCards = null!;
     FlowLayoutPanel footer = null!;
     Button openSettings = null!;
@@ -29,7 +35,7 @@ internal sealed partial class MainForm
         AutoScaleDimensions = new SizeF(96, 96);
         BackColor = AppTheme.Background;
         ForeColor = AppTheme.Text;
-        Font = new Font("Segoe UI", 10.5f);
+        Font = AppTheme.Font(10);
         Name = "ProxyBridgeMainForm";
         AccessibleName = "ProxyBridge — управление подключением";
         HandleCreated += (_, _) => AppTheme.TryDarkTitleBar(this);
@@ -50,7 +56,7 @@ internal sealed partial class MainForm
         contentLayout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 4, Margin = Padding.Empty };
         contentLayout.ColumnStyles.Add(new(SizeType.Percent, 100));
         contentLayout.RowStyles.Add(new(SizeType.Absolute, 64));
-        contentLayout.RowStyles.Add(new(SizeType.Absolute, 140));
+        contentLayout.RowStyles.Add(new(SizeType.Absolute, FullStatusHeight));
         contentLayout.RowStyles.Add(new(SizeType.Percent, 100));
         contentLayout.RowStyles.Add(new(SizeType.Absolute, 58));
         contentLayout.Controls.Add(BuildHeader(), 0, 0);
@@ -62,7 +68,7 @@ internal sealed partial class MainForm
         unsavedChanges.Name = "unsavedChanges";
         unsavedChanges.AccessibleName = "Есть несохранённые изменения";
         unsavedChanges.Dock = DockStyle.None;
-        unsavedChanges.Size = new Size(290, 40);
+        unsavedChanges.Size = new Size(290, 32);
         unsavedChanges.TextAlign = ContentAlignment.MiddleRight;
         unsavedChanges.Margin = new Padding(0, 0, 12, 0);
         footer.Controls.AddRange([apply, unsavedChanges]);
@@ -94,40 +100,51 @@ internal sealed partial class MainForm
 
     Panel BuildSidebar()
     {
+        // Flat full-height sidebar separated by one hairline, as in System Settings.
         var panel = new ThemeCard
         {
-            CornerRadius = 24,
+            CornerRadius = 0,
+            BorderMode = ThemeCardBorder.Right,
             Dock = DockStyle.Fill,
             BackColor = AppTheme.Sidebar,
-            Padding = new Padding(12, 20, 12, 16),
-            Margin = new Padding(12, 12, 0, 12)
+            Padding = new Padding(10, 20, 11, 16),
+            Margin = Padding.Empty
         };
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8, Margin = Padding.Empty };
         layout.ColumnStyles.Add(new(SizeType.Percent, 100));
-        layout.RowStyles.Add(new(SizeType.Absolute, 40));
-        layout.RowStyles.Add(new(SizeType.Absolute, 56));
+        layout.RowStyles.Add(new(SizeType.Absolute, 30));
+        layout.RowStyles.Add(new(SizeType.Absolute, 52));
         for (int i = 0; i < 4; i++)
         {
-            layout.RowStyles.Add(new(SizeType.Absolute, 52));
+            layout.RowStyles.Add(new(SizeType.Absolute, 40));
         }
 
         layout.RowStyles.Add(new(SizeType.Percent, 100));
-        layout.RowStyles.Add(new(SizeType.Absolute, 90));
-        layout.Controls.Add(AppTheme.Label("ProxyBridge", 16, true), 0, 0);
-        layout.Controls.Add(AppTheme.Label("Ваше подключение\nпод контролем", 9.5f, false, AppTheme.Muted), 0, 1);
+        layout.RowStyles.Add(new(SizeType.Absolute, 44));
+        var appName = AppTheme.Label("ProxyBridge", 13, true);
+        appName.Padding = new Padding(4, 0, 0, 0);
+        layout.Controls.Add(appName, 0, 0);
+        var tagline = AppTheme.Label("Ваше подключение\nпод контролем", 9, false, AppTheme.Muted);
+        tagline.Padding = new Padding(4, 0, 0, 8);
+        tagline.TextAlign = ContentAlignment.TopLeft;
+        layout.Controls.Add(tagline, 0, 1);
         var entries = new[] { ("overview", "Обзор", "navOverview"), ("proxy", "Прокси", "navProxy"), ("exclusions", "Исключения", "navExclusions"), ("help", "Справка", "navHelp") };
         for (int i = 0; i < entries.Length; i++)
         {
             var (key, text, name) = entries[i];
-            var button = new ThemeButton { Name = name, Text = text, NavigationIcon = key, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4), TextAlign = ContentAlignment.MiddleLeft, TabIndex = i };
+            var button = new ThemeButton { Name = name, Text = text, NavigationIcon = key, Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2), TextAlign = ContentAlignment.MiddleLeft, TabIndex = i };
             AppTheme.Button(button);
-            button.Padding = new Padding(14, 0, 0, 0);
+            button.Padding = new Padding(8, 0, 0, 0);
             button.FlatAppearance.BorderSize = 0;
             button.Click += (_, _) => NavigateTo(key);
             navigation.Add(key, button);
             layout.Controls.Add(button, 0, i + 2);
         }
-        layout.Controls.Add(AppTheme.Label($"ProxyBridge {AppVersion.Display}\nD — подключено · P — пауза\nS — сбой\nF1 — справка", 9, false, AppTheme.Muted), 0, 7);
+        var versionLabel = AppTheme.Label($"ProxyBridge {AppVersion.Display}\nF1 — справка", 9, false, AppTheme.Muted);
+        versionLabel.Padding = new Padding(4, 0, 0, 0);
+        versionLabel.TextAlign = ContentAlignment.BottomLeft;
+        hints.SetToolTip(versionLabel, "Значок в трее: D — подключено, P — пауза или подключение, S — сбой.");
+        layout.Controls.Add(versionLabel, 0, 7);
         panel.Controls.Add(layout);
         return panel;
     }
@@ -139,7 +156,7 @@ internal sealed partial class MainForm
         header.ColumnStyles.Add(new(SizeType.AutoSize));
         pageTitle.Name = "pageTitle";
         header.Controls.Add(pageTitle, 0, 0);
-        var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 8, 0, 0), Margin = Padding.Empty };
+        var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 14, 0, 0), Margin = Padding.Empty };
         openSettings = new ThemeButton { Text = "Открыть настройки" };
         StyleAction(openSettings, "openSettings", 180);
         openSettings.Click += (_, _) => NavigateTo("proxy");
@@ -148,10 +165,13 @@ internal sealed partial class MainForm
         minimize.Click += (_, _) => Hide();
         hints.SetToolTip(minimize, "Скрыть окно. Приложение продолжит работать; открыть его можно из трея.");
         StyleAction(exitApplication, "exitApplication", 88);
+        // Utility commands are quiet: no fill or outline until hovered.
         foreach (var utility in new[] { minimize, exitApplication })
         {
             utility.BackColor = AppTheme.Background;
-            utility.FlatAppearance.BorderSize = 1;
+            utility.FlatAppearance.BorderSize = 0;
+            utility.FlatAppearance.MouseOverBackColor = AppTheme.Raised;
+            utility.FlatAppearance.MouseDownBackColor = AppTheme.Pressed;
             utility.ForeColor = AppTheme.Muted;
         }
         hints.SetToolTip(exitApplication, "Закрыть программу, сохранив блокировку");
@@ -164,48 +184,129 @@ internal sealed partial class MainForm
     {
         var card = AppTheme.NewCard();
         card.Name = "connectionCard";
-        card.Padding = new Padding(24, 16, 24, 16);
-        var rows = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty };
-        rows.ColumnStyles.Add(new(SizeType.Percent, 100));
-        rows.RowStyles.Add(new(SizeType.Absolute, 38));
-        rows.RowStyles.Add(new(SizeType.Percent, 100));
-        rows.RowStyles.Add(new(SizeType.Absolute, 24));
-        var stateLine = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        card.Padding = new Padding(20, 14, 20, 14);
+        statusCard = card;
+        statusRows = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty };
+        statusRows.ColumnStyles.Add(new(SizeType.Percent, 100));
+        statusRows.RowStyles.Add(new(SizeType.Absolute, 32));
+        statusRows.RowStyles.Add(new(SizeType.Percent, 100));
+        statusRows.RowStyles.Add(new(SizeType.Absolute, 22));
+        // Icon (shape + colour) | state | inline summary (slim card only).
+        stateLine = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
+        stateLine.ColumnStyles.Add(new(SizeType.Absolute, 26));
+        stateLine.ColumnStyles.Add(new(SizeType.AutoSize));
         stateLine.ColumnStyles.Add(new(SizeType.Percent, 100));
-        stateLine.ColumnStyles.Add(new(SizeType.Absolute, 20));
         stateLine.RowStyles.Add(new(SizeType.Percent, 100));
-        stateDot.Paint += (_, e) =>
-        {
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            Color dotColor = VisualState == ProxyVisualState.Connected ? AppTheme.Green
-                : VisualState == ProxyVisualState.Failed ? AppTheme.Red : AppTheme.Amber;
-            using var brush = new SolidBrush(dotColor);
-            float size = AppTheme.Scale(stateDot, 8);
-            e.Graphics.FillEllipse(brush, (stateDot.Width - size) / 2, (stateDot.Height - size) / 2, size, size);
-        };
+        stateDot.Name = "stateIcon";
+        stateDot.Paint += (_, e) => DrawStateIcon(e.Graphics);
         stateBadge.Name = "stateBadge";
-        stateLine.Controls.Add(stateBadge, 0, 0);
-        stateLine.Controls.Add(stateDot, 1, 0);
-        rows.Controls.Add(stateLine, 0, 0);
+        stateBadge.AutoSize = true;
+        stateBadge.Dock = DockStyle.Fill;
+        stateLine.Controls.Add(stateDot, 0, 0);
+        stateLine.Controls.Add(stateBadge, 1, 0);
+        inlineSummary.Name = "connectionSummaryInline";
+        inlineSummary.TextAlign = ContentAlignment.MiddleRight;
+        inlineSummary.AutoEllipsis = true;
+        inlineSummary.Visible = false;
+        stateLine.Controls.Add(inlineSummary, 2, 0);
+        statusRows.Controls.Add(stateLine, 0, 0);
         status.Name = "connectionStatus";
         status.AutoSize = false;
         status.Dock = DockStyle.Fill;
         status.Margin = Padding.Empty;
-        status.Font = new Font("Segoe UI", 11);
+        status.Font = AppTheme.Font(10);
         status.TextAlign = ContentAlignment.MiddleLeft;
         status.AccessibleName = "Текущее состояние подключения";
-        rows.Controls.Add(status, 0, 1);
+        statusRows.Controls.Add(status, 0, 1);
         connectionSummary.Name = "connectionSummary";
-        rows.Controls.Add(connectionSummary, 0, 2);
-        card.Controls.Add(rows);
+        statusRows.Controls.Add(connectionSummary, 0, 2);
+        card.Controls.Add(statusRows);
         return card;
+    }
+
+    const int FullStatusHeight = 128, CompactStatusHeight = 140, SlimStatusHeight = 48;
+
+    // The full card on Overview (and in the compact startup view); a single
+    // line on the other pages so forms, lists and help get the height.
+    void SetStatusCardSlim(bool slim)
+    {
+        statusCard.Padding = slim ? new Padding(16, 6, 16, 6) : new Padding(20, 14, 20, 14);
+        statusRows.RowStyles[0].SizeType = slim ? SizeType.Percent : SizeType.Absolute;
+        statusRows.RowStyles[0].Height = slim ? 100 : 32;
+        statusRows.RowStyles[1].SizeType = slim ? SizeType.Absolute : SizeType.Percent;
+        statusRows.RowStyles[1].Height = slim ? 0 : 100;
+        statusRows.RowStyles[2].Height = slim ? 0 : 22;
+        status.Visible = connectionSummary.Visible = !slim;
+        inlineSummary.Visible = slim;
+        stateBadge.Font = slim ? stateFontSlim : stateFontFull;
+        contentLayout.RowStyles[1].Height = slim ? SlimStatusHeight : IsCompact ? CompactStatusHeight : FullStatusHeight;
+    }
+
+    // Static 16 px state icon: shape plus colour, so the state reads without
+    // colour vision. No animation, including while connecting.
+    void DrawStateIcon(Graphics graphics)
+    {
+        graphics.Clear(AppTheme.Card);
+        float size = AppTheme.Scale(stateDot, 16);
+        var box = new RectangleF(0, (stateDot.Height - size) / 2, size, size);
+        var saved = graphics.Save();
+        try
+        {
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            float stroke = Math.Max(1.5f, AppTheme.Scale(stateDot, 2));
+            Color color = VisualState switch
+            {
+                ProxyVisualState.Connected => AppTheme.Green,
+                ProxyVisualState.Failed => AppTheme.Red,
+                ProxyVisualState.Connecting => AppTheme.Accent,
+                _ => AppTheme.Amber
+            };
+            if (VisualState == ProxyVisualState.Connecting)
+            {
+                using var ring = new Pen(color, stroke);
+                graphics.DrawEllipse(ring, RectangleF.Inflate(box, -stroke / 2, -stroke / 2));
+                return;
+            }
+
+            using (var fill = new SolidBrush(color))
+            {
+                graphics.FillEllipse(fill, box);
+            }
+
+            using var mark = new Pen(AppTheme.Card, stroke)
+            {
+                StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                EndCap = System.Drawing.Drawing2D.LineCap.Round,
+                LineJoin = System.Drawing.Drawing2D.LineJoin.Round
+            };
+            float x = box.X, y = box.Y, s = box.Width;
+            switch (VisualState)
+            {
+                case ProxyVisualState.Connected:
+                    graphics.DrawLines(mark, [new PointF(x + s * .28f, y + s * .52f), new PointF(x + s * .44f, y + s * .68f), new PointF(x + s * .73f, y + s * .36f)]);
+                    break;
+                case ProxyVisualState.Failed:
+                    graphics.DrawLine(mark, x + s / 2, y + s * .27f, x + s / 2, y + s * .56f);
+                    using (var dot = new SolidBrush(AppTheme.Card))
+                    {
+                        float d = stroke * 1.1f;
+                        graphics.FillEllipse(dot, x + s / 2 - d / 2, y + s * .72f - d / 2, d, d);
+                    }
+                    break;
+                default:
+                    graphics.DrawLine(mark, x + s * .39f, y + s * .32f, x + s * .39f, y + s * .68f);
+                    graphics.DrawLine(mark, x + s * .61f, y + s * .32f, x + s * .61f, y + s * .68f);
+                    break;
+            }
+        }
+        finally { graphics.Restore(saved); }
     }
 
     Control BuildOverview()
     {
         overviewLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = Padding.Empty };
         overviewLayout.ColumnStyles.Add(new(SizeType.Percent, 100));
-        overviewLayout.RowStyles.Add(new(SizeType.Absolute, 112));
+        overviewLayout.RowStyles.Add(new(SizeType.Absolute, 108));
         overviewLayout.RowStyles.Add(new(SizeType.Absolute, 48));
         overviewLayout.RowStyles.Add(new(SizeType.Percent, 100));
         userLogNote.Font = Font;
@@ -230,15 +331,12 @@ internal sealed partial class MainForm
                 Margin = new Padding(i == 0 ? 0 : 6, 0, i == 2 ? 0 : 6, 8)
             };
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
-            grid.RowStyles.Add(new(SizeType.Absolute, 60));
+            // Two-line captions at 10 pt need 56 px (DesignPreview text-height).
+            grid.RowStyles.Add(new(SizeType.Absolute, 56));
             grid.RowStyles.Add(new(SizeType.Percent, 100));
+            // One primary action plus two equal secondary actions.
             StyleAction(button, name, 180, primary: i == 0);
-            ((ThemeButton)button).CornerRadius = 22;
-            if (i == 2)
-            {
-                button.BackColor = AppTheme.Background;
-                button.ForeColor = AppTheme.Text;
-            }
+            ((ThemeButton)button).CornerRadius = 12;
             if (i == 1)
             {
                 button.Text = "Остановить и\nблокировать";
@@ -253,7 +351,7 @@ internal sealed partial class MainForm
             button.Margin = Padding.Empty;
             button.TabIndex = i;
             grid.Controls.Add(button, 0, 0);
-            grid.Controls.Add(AppTheme.Label(caption, 9.25f, false, AppTheme.Muted), 0, 1);
+            grid.Controls.Add(AppTheme.Label(caption, 9, false, AppTheme.Muted), 0, 1);
             card.Controls.Add(grid);
             actions.Controls.Add(card, i, 0);
         }
@@ -265,9 +363,11 @@ internal sealed partial class MainForm
         var journalHeader = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
         var journalTitle = AppTheme.Label("Журнал событий", 11, true);
         journalTitle.Dock = DockStyle.None;
-        journalTitle.Size = new Size(166, 40);
+        journalTitle.Size = new Size(166, 32);
+        journalTitle.Margin = new Padding(0, 8, 0, 0);
         StyleAction(speed, "speed", 144);
         StyleAction(cancelSpeed, "cancelSpeed", 144);
+        speed.Margin = cancelSpeed.Margin = new Padding(0, 8, 8, 0);
         cancelSpeed.Visible = cancelSpeed.Enabled;
         cancelSpeed.EnabledChanged += (_, _) => cancelSpeed.Visible = cancelSpeed.Enabled;
         speed.TabIndex = 3;
@@ -281,7 +381,8 @@ internal sealed partial class MainForm
         log.BackColor = AppTheme.Input;
         log.ForeColor = AppTheme.Text;
         log.BorderStyle = BorderStyle.None;
-        log.Font = new Font("Consolas", 9.5f);
+        log.Font = AppTheme.MonoFont(9.5f);
+        AppTheme.DarkNative(log);
         log.Margin = Padding.Empty;
         log.TabIndex = 5;
         log.AccessibleName = "Журнал запуска и подключения";
@@ -300,6 +401,7 @@ internal sealed partial class MainForm
         userLogNote.BackColor = AppTheme.Input;
         userLogNote.ForeColor = AppTheme.Text;
         userLogNote.BorderStyle = BorderStyle.None;
+        AppTheme.DarkNative(userLogNote);
         userLogNote.TabIndex = 6;
         userLogNote.AccessibleName = "Заметка пользователя для журнала";
         userLogNote.AccessibleDescription = "Три строки с прокруткой. Enter добавляет строку; запись выполняется кнопкой «Записать в лог».";
@@ -309,11 +411,12 @@ internal sealed partial class MainForm
         writeLogNote.TabIndex = 7;
         hints.SetToolTip(userLogNote, "Опишите своё действие и нажмите «Записать в лог». Enter добавляет новую строку.");
         var noteCard = AppTheme.NewCard();
-        noteCard.CornerRadius = 12;
+        noteCard.CornerRadius = 8;
         noteCard.BackColor = AppTheme.Input;
         noteCard.Padding = new Padding(8, 4, 8, 4);
         noteCard.Margin = new Padding(0, 0, 8, 0);
         noteCard.Controls.Add(userLogNote);
+        FocusOutline(noteCard, userLogNote);
         noteRow.Controls.Add(noteCard, 0, 0);
         noteRow.Controls.Add(writeLogNote, 1, 0);
         overviewLayout.Controls.Add(noteRow, 0, 3);
@@ -364,7 +467,7 @@ internal sealed partial class MainForm
         };
         activityStatus.Name = "activityStatus";
         activityStatus.AccessibleName = "Состояние журнала активности";
-        activityStatus.Font = new Font(Font.FontFamily, 8.5f);
+        activityStatus.Font = AppTheme.Font(9);
         activityStatus.Dock = DockStyle.Fill;
         activityStatus.Margin = Padding.Empty;
         activityStatus.TextAlign = ContentAlignment.MiddleLeft;
@@ -388,8 +491,8 @@ internal sealed partial class MainForm
         var scroll = new Panel { AutoScroll = true, Dock = DockStyle.Fill, Margin = Padding.Empty };
         var card = AppTheme.NewCard();
         card.Dock = DockStyle.Top;
-        card.Height = 390;
-        card.Padding = new Padding(20);
+        card.Height = 380;
+        card.Padding = new Padding(16);
         var rows = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 7, Margin = Padding.Empty };
         rows.ColumnStyles.Add(new(SizeType.Absolute, 136));
         rows.ColumnStyles.Add(new(SizeType.Percent, 100));
@@ -420,6 +523,7 @@ internal sealed partial class MainForm
             if (input is ComboBox combo)
             {
                 combo.FlatStyle = FlatStyle.Flat;
+                AppTheme.DarkNative(combo, "DarkMode_CFD");
                 combo.DrawMode = DrawMode.OwnerDrawFixed;
                 combo.ItemHeight = Math.Max(18, TextRenderer.MeasureText("Ag", combo.Font, Size.Empty, TextFormatFlags.NoPadding).Height);
                 combo.DrawItem += (_, e) =>
@@ -430,22 +534,37 @@ internal sealed partial class MainForm
                     }
 
                     bool selected = (e.State & DrawItemState.Selected) != 0 && (e.State & DrawItemState.ComboBoxEdit) == 0;
-                    using var brush = new SolidBrush(selected ? AppTheme.Selection : AppTheme.Input);
-                    e.Graphics.FillRectangle(brush, e.Bounds);
+                    DrawListRow(e.Graphics, e.Bounds, AppTheme.Input, selected, inset: 2);
                     Color textColor = SystemInformation.HighContrast && selected ? SystemColors.HighlightText : AppTheme.Text;
                     TextRenderer.DrawText(e.Graphics, combo.GetItemText(combo.Items[e.Index]), combo.Font,
-                        Rectangle.Inflate(e.Bounds, -3, 0), textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-                    if ((e.State & DrawItemState.Focus) != 0)
+                        Rectangle.Inflate(e.Bounds, -6, 0), textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                    if ((e.State & DrawItemState.Focus) != 0 && SystemInformation.HighContrast)
                     {
                         e.DrawFocusRectangle();
                     }
                 };
             }
-            var wrapper = new ThemeCard { CornerRadius = 10, BackColor = AppTheme.Input, Dock = DockStyle.Fill, Padding = new Padding(10, 7, 10, 5), Margin = new Padding(0, 5, 0, 5), TabIndex = i };
-            input.Dock = DockStyle.Top;
-            wrapper.Controls.Add(input);
+            var wrapper = new ThemeCard { CornerRadius = 8, BackColor = AppTheme.Input, Dock = DockStyle.Fill, Padding = new Padding(10, 6, 10, 4), Margin = new Padding(0, 5, 0, 5), TabIndex = i };
+            if (input is ComboBox flat && !SystemInformation.HighContrast)
+            {
+                // WinForms paints a light frame around a flat ComboBox with system
+                // colours. Clip 2 px of it inside a dark host; the rounded wrapper
+                // provides the visible outline. Keyboard and accessibility unchanged.
+                var clip = new Panel { Dock = DockStyle.Top, Height = Math.Max(1, flat.PreferredHeight - 4), BackColor = AppTheme.Input, Margin = Padding.Empty };
+                flat.Location = new Point(-2, -2);
+                flat.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+                clip.Resize += (_, _) => flat.Width = clip.Width + 4;
+                clip.Controls.Add(flat);
+                wrapper.Controls.Add(clip);
+            }
+            else
+            {
+                input.Dock = DockStyle.Top;
+                wrapper.Controls.Add(input);
+            }
+            FocusOutline(wrapper, input);
             rows.Controls.Add(wrapper, 1, i + 1);
-            rows.RowStyles.Add(new(SizeType.Absolute, 46));
+            rows.RowStyles.Add(new(SizeType.Absolute, 44));
         }
         autoStart.Name = "autoStart";
         autoStart.ForeColor = AppTheme.Text;
@@ -472,12 +591,12 @@ internal sealed partial class MainForm
     {
         var rows = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = Padding.Empty };
         rows.ColumnStyles.Add(new(SizeType.Percent, 100));
-        rows.RowStyles.Add(new(SizeType.Absolute, 90));
+        rows.RowStyles.Add(new(SizeType.Absolute, 60));
         rows.RowStyles.Add(new(SizeType.Absolute, 30));
         rows.RowStyles.Add(new(SizeType.Percent, 100));
         rows.RowStyles.Add(new(SizeType.Absolute, 34));
         rows.RowStyles.Add(new(SizeType.Absolute, 48));
-        rows.Controls.Add(AppTheme.Label("Приложения и адреса из списка доступны напрямую, даже при остановке прокси.\nПри подключении DNS остаётся через прокси; порт 53 не исключается.\nПосле изменения списка нажмите «Сохранить / применить».", 9.5f, false, AppTheme.Muted), 0, 0);
+        rows.Controls.Add(AppTheme.Label("Приложения и адреса из списка доступны напрямую, даже при остановке прокси.\nПри подключении DNS остаётся через прокси; порт 53 не исключается.\nПосле изменения списка нажмите «Сохранить / применить».", 9, false, AppTheme.Muted), 0, 0);
         exclusionCount.Name = "exclusionCount";
         rows.Controls.Add(exclusionCount, 0, 1);
         exclusions.Name = "exclusions";
@@ -485,7 +604,8 @@ internal sealed partial class MainForm
         exclusions.ForeColor = AppTheme.Text;
         exclusions.BorderStyle = BorderStyle.None;
         exclusions.DrawMode = DrawMode.OwnerDrawFixed;
-        exclusions.ItemHeight = 56;
+        exclusions.ItemHeight = 52;
+        AppTheme.DarkNative(exclusions);
         exclusions.IntegralHeight = false;
         exclusions.HorizontalScrollbar = false;
         exclusions.AccessibleName = "Приложения и адреса с прямым доступом";
@@ -529,12 +649,11 @@ internal sealed partial class MainForm
         }
 
         bool selected = (e.State & DrawItemState.Selected) != 0;
-        using var background = new SolidBrush(selected ? AppTheme.Selection : AppTheme.Input);
-        e.Graphics.FillRectangle(background, e.Bounds);
+        DrawListRow(e.Graphics, e.Bounds, AppTheme.Input, selected, inset: 4);
         string path = (string)exclusions.Items[e.Index];
         bool isAddress = AddressExclusion.TryParse(path, out var address);
-        var title = new Rectangle(e.Bounds.X + 12, e.Bounds.Y + 7, e.Bounds.Width - 24, 22);
-        var detail = new Rectangle(e.Bounds.X + 12, e.Bounds.Y + 31, e.Bounds.Width - 24, 19);
+        var title = new Rectangle(e.Bounds.X + 14, e.Bounds.Y + 6, e.Bounds.Width - 28, 22);
+        var detail = new Rectangle(e.Bounds.X + 14, e.Bounds.Y + 28, e.Bounds.Width - 28, 19);
         Color titleColor = SystemInformation.HighContrast && selected ? SystemColors.HighlightText : AppTheme.Text;
         Color detailColor = SystemInformation.HighContrast && selected ? SystemColors.HighlightText : AppTheme.Muted;
         string titleText = isAddress ? path : Path.GetFileName(path);
@@ -543,10 +662,51 @@ internal sealed partial class MainForm
             : path;
         TextRenderer.DrawText(e.Graphics, titleText, Font, title, titleColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         TextRenderer.DrawText(e.Graphics, detailText, exclusionPath.Font, detail, detailColor, TextFormatFlags.PathEllipsis | TextFormatFlags.NoPrefix);
-        if ((e.State & DrawItemState.Focus) != 0)
+        if ((e.State & DrawItemState.Focus) != 0 && SystemInformation.HighContrast)
         {
             e.DrawFocusRectangle();
         }
+    }
+
+    // List rows: rounded selection inset from the list edges; high contrast
+    // keeps the plain system highlight rectangle.
+    static void DrawListRow(Graphics graphics, Rectangle bounds, Color surface, bool selected, int inset)
+    {
+        if (SystemInformation.HighContrast)
+        {
+            using var plain = new SolidBrush(selected ? SystemColors.Highlight : surface);
+            graphics.FillRectangle(plain, bounds);
+            return;
+        }
+
+        using (var brush = new SolidBrush(surface))
+        {
+            graphics.FillRectangle(brush, bounds);
+        }
+
+        if (!selected)
+        {
+            return;
+        }
+
+        var saved = graphics.Save();
+        try
+        {
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var row = new RectangleF(bounds.X + inset, bounds.Y + 1, bounds.Width - inset * 2, bounds.Height - 2);
+            using var path = AppTheme.Rounded(row, 6);
+            using var fill = new SolidBrush(AppTheme.Selection);
+            graphics.FillPath(fill, path);
+        }
+        finally { graphics.Restore(saved); }
+    }
+
+    // A text field shows focus on its rounded wrapper (2 px Accent), never as
+    // a bare caret only. Error states set Emphasis to Red elsewhere.
+    static void FocusOutline(ThemeCard wrapper, Control input)
+    {
+        input.Enter += (_, _) => wrapper.Emphasis = AppTheme.Accent;
+        input.Leave += (_, _) => wrapper.Emphasis = null;
     }
 
     Control BuildHelpPage()
@@ -556,8 +716,10 @@ internal sealed partial class MainForm
         var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         grid.ColumnStyles.Add(new(SizeType.Absolute, 190));
         grid.ColumnStyles.Add(new(SizeType.Percent, 100));
-        var topics = new ListBox { Name = "helpTopics", Dock = DockStyle.Fill, BackColor = AppTheme.Card, ForeColor = AppTheme.Text, BorderStyle = BorderStyle.None, IntegralHeight = false, ItemHeight = 31, DrawMode = DrawMode.OwnerDrawFixed, Margin = new Padding(0, 0, 14, 0), TabIndex = 0, AccessibleName = "Разделы справки" };
-        var body = new RichTextBox { Name = "helpBody", Dock = DockStyle.Fill, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = AppTheme.Card, ForeColor = AppTheme.Text, Font = new Font("Segoe UI", 10.5f), DetectUrls = false, ScrollBars = RichTextBoxScrollBars.Vertical, TabIndex = 1, AccessibleName = "Содержание справки" };
+        var topics = new ListBox { Name = "helpTopics", Dock = DockStyle.Fill, BackColor = AppTheme.Card, ForeColor = AppTheme.Text, BorderStyle = BorderStyle.None, IntegralHeight = false, ItemHeight = 32, DrawMode = DrawMode.OwnerDrawFixed, Margin = new Padding(0, 0, 14, 0), TabIndex = 0, AccessibleName = "Разделы справки" };
+        var body = new RichTextBox { Name = "helpBody", Dock = DockStyle.Fill, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = AppTheme.Card, ForeColor = AppTheme.Text, Font = AppTheme.Font(10), DetectUrls = false, ScrollBars = RichTextBoxScrollBars.Vertical, TabIndex = 1, AccessibleName = "Содержание справки" };
+        AppTheme.DarkNative(topics);
+        AppTheme.DarkNative(body);
         foreach (var section in HelpContent.Sections)
         {
             topics.Items.Add(section.Title switch
@@ -578,12 +740,14 @@ internal sealed partial class MainForm
             }
 
             bool selected = (e.State & DrawItemState.Selected) != 0;
-            using var brush = new SolidBrush(selected ? AppTheme.Selection : AppTheme.Card);
-            e.Graphics.FillRectangle(brush, e.Bounds);
-            var rect = Rectangle.Inflate(e.Bounds, -7, 0);
+            DrawListRow(e.Graphics, e.Bounds, AppTheme.Card, selected, inset: 0);
+            var rect = Rectangle.Inflate(e.Bounds, -10, 0);
             Color textColor = SystemInformation.HighContrast && selected ? SystemColors.HighlightText : AppTheme.Text;
             TextRenderer.DrawText(e.Graphics, (string)topics.Items[e.Index], Font, rect, textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            e.DrawFocusRectangle();
+            if (SystemInformation.HighContrast)
+            {
+                e.DrawFocusRectangle();
+            }
         };
         topics.SelectedIndexChanged += (_, _) =>
         {
@@ -594,7 +758,7 @@ internal sealed partial class MainForm
 
             var section = HelpContent.Sections[topics.SelectedIndex];
             body.Text = section.Title + Environment.NewLine + Environment.NewLine + section.Body;
-            using var headingFont = new Font("Segoe UI", 15, FontStyle.Bold);
+            using var headingFont = AppTheme.Font(15, true);
             body.Select(0, section.Title.Length);
             body.SelectionFont = headingFont;
             body.Select(0, 0);
@@ -641,14 +805,16 @@ internal sealed partial class MainForm
         {
             bool active = entry.Key == page;
             ((ThemeButton)entry.Value).Selected = active;
-            entry.Value.BackColor = active ? AppTheme.Selection : AppTheme.Sidebar;
-            entry.Value.ForeColor = active ? AppTheme.Accent : AppTheme.Muted;
+            entry.Value.BackColor = active ? AppTheme.Primary : AppTheme.Sidebar;
+            entry.Value.ForeColor = active ? AppTheme.PrimaryText : AppTheme.Text;
+            entry.Value.Font = active ? navigationFontSelected : navigationFont;
             entry.Value.FlatAppearance.BorderColor = entry.Value.BackColor;
-            entry.Value.FlatAppearance.MouseOverBackColor = active ? AppTheme.SelectionHover : AppTheme.Raised;
-            entry.Value.FlatAppearance.MouseDownBackColor = AppTheme.Selection;
+            entry.Value.FlatAppearance.MouseOverBackColor = active ? AppTheme.PrimaryHover : AppTheme.Raised;
+            entry.Value.FlatAppearance.MouseDownBackColor = active ? AppTheme.PrimaryPressed : AppTheme.Hover;
             entry.Value.AccessibleDescription = active ? "Текущий раздел" : "Открыть раздел";
         }
         pageTitle.Text = IsCompact ? "Запуск ProxyBridge" : navigation[page].Text;
+        SetStatusCardSlim(page != "overview" && !IsCompact);
         bool editablePage = page is "proxy" or "exclusions";
         footer.Visible = editablePage;
         contentLayout.RowStyles[3].Height = editablePage ? 58 : 0;
@@ -660,16 +826,19 @@ internal sealed partial class MainForm
         sidebar.Visible = !compact;
         shell.ColumnStyles[0].Width = compact ? 0 : 208;
         contentLayout.RowStyles[0].Height = compact ? 56 : 64;
-        contentLayout.RowStyles[1].Height = 140;
+        // Compact startup keeps the taller card: long recovery text must fit.
+        SetStatusCardSlim(false);
+        contentLayout.RowStyles[1].Height = compact ? CompactStatusHeight : FullStatusHeight;
         openSettings.Visible = compact;
         actionCards.Visible = !compact;
-        overviewLayout.RowStyles[0].Height = compact ? 0 : 112;
+        overviewLayout.RowStyles[0].Height = compact ? 0 : 108;
         MinimumSize = compact ? new Size(740, 570) : new Size(900, 706);
         Size = compact ? new Size(780, 610) : new Size(1080, 806);
     }
     void RefreshOverviewSummary()
     {
         connectionSummary.Text = $"Сохранённый прокси: {settings.Host}:{settings.Port}  ·  EXE: {settings.ExcludedApplications.Length} · Адресов: {settings.ExcludedAddresses.Length}";
+        inlineSummary.Text = $"{settings.Host}:{settings.Port}  ·  EXE: {settings.ExcludedApplications.Length} · Адресов: {settings.ExcludedAddresses.Length}";
         exclusionCount.Text = $"В списке: {ExcludedApplicationItems().Length} EXE · Адресов и подсетей: {ExcludedAddressItems().Length}";
         bool changed = host.Text.Trim() != settings.Host ||
             !int.TryParse(port.Text, out int enteredPort) || enteredPort != settings.Port ||
@@ -690,6 +859,18 @@ internal sealed partial class MainForm
         };
         stateBadge.ForeColor = AppTheme.Text;
         status.ForeColor = AppTheme.Text;
+        // Once connected, «Подключить» is no longer the recommended action:
+        // it stays available (reconnect) but loses the primary emphasis.
+        if (connect is ThemeButton connectButton)
+        {
+            connectButton.IsPrimary = VisualState != ProxyVisualState.Connected;
+            connect.BackColor = connectButton.IsPrimary ? AppTheme.Primary : AppTheme.Raised;
+            connect.ForeColor = connectButton.IsPrimary ? AppTheme.PrimaryText : AppTheme.Text;
+            connect.FlatAppearance.BorderSize = connectButton.IsPrimary ? 0 : 1;
+            connect.FlatAppearance.BorderColor = connectButton.IsPrimary ? AppTheme.Primary : AppTheme.CardBorder;
+            connect.FlatAppearance.MouseOverBackColor = connectButton.IsPrimary ? AppTheme.PrimaryHover : AppTheme.Hover;
+            connect.FlatAppearance.MouseDownBackColor = connectButton.IsPrimary ? AppTheme.PrimaryPressed : AppTheme.Pressed;
+        }
         stateDot.Invalidate();
         RefreshOverviewSummary();
     }

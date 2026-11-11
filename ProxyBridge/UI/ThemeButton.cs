@@ -10,7 +10,9 @@ internal sealed class ThemeButton : Button
 {
     bool hovered, pointerPressed, keyPressed, selected, isPrimary;
     string? navigationIcon;
-    int cornerRadius = 20;
+    // Keep >= 8: the corner regression in tests/DesignPreview samples 2x2
+    // exterior pixels and skips smaller radii.
+    int cornerRadius = 8;
     System.Windows.Forms.Timer? transition;
     Color currentBackground, fromBackground, targetBackground;
     long transitionStarted;
@@ -60,7 +62,7 @@ internal sealed class ThemeButton : Button
         }
     }
 
-    [DefaultValue(20)]
+    [DefaultValue(8)]
     public int CornerRadius
     {
         get => cornerRadius;
@@ -185,7 +187,8 @@ internal sealed class ThemeButton : Button
     bool Pressed => Enabled && (keyPressed || pointerPressed && hovered);
 
     Color DesiredBackground() => !Enabled ? AppTheme.Card
-        : selected ? (Pressed ? AppTheme.SelectionPressed : hovered ? AppTheme.SelectionHover : AppTheme.Selection)
+        // Selected navigation is a solid accent fill, as in System Settings.
+        : selected ? (Pressed ? AppTheme.PrimaryPressed : hovered ? AppTheme.PrimaryHover : AppTheme.Primary)
         : IsPrimary ? (Pressed ? AppTheme.PrimaryPressed : hovered ? AppTheme.PrimaryHover : AppTheme.Primary)
         : Pressed ? FlatAppearance.MouseDownBackColor
         : hovered ? FlatAppearance.MouseOverBackColor : BackColor;
@@ -285,14 +288,16 @@ internal sealed class ThemeButton : Button
             currentBackground = targetBackground = background;
             hasBackground = true;
         }
-        Color foreground = !Enabled ? AppTheme.Disabled : selected ? AppTheme.Accent : IsPrimary ? AppTheme.PrimaryText : ForeColor;
-        Color border = !Enabled ? AppTheme.CardBorder : selected ? AppTheme.SelectionHover
-            : hovered ? AppTheme.BorderHover : FlatAppearance.BorderColor;
+        Color foreground = !Enabled ? AppTheme.Disabled : selected || IsPrimary ? AppTheme.PrimaryText : ForeColor;
+        Color iconColor = !Enabled ? AppTheme.Disabled : selected ? AppTheme.PrimaryText : AppTheme.Muted;
+        Color border = !Enabled ? AppTheme.CardBorder : hovered ? AppTheme.Border : FlatAppearance.BorderColor;
+        bool focusRing = Enabled && Focused && ShowFocusCues;
         if (highContrast)
         {
             bool highlighted = Enabled && (selected || IsPrimary || BackColor == SystemColors.Highlight);
             background = highlighted ? SystemColors.Highlight : SystemColors.Control;
             foreground = !Enabled ? SystemColors.GrayText : highlighted ? SystemColors.HighlightText : SystemColors.ControlText;
+            iconColor = foreground;
             border = SystemColors.WindowFrame;
         }
         var saved = e.Graphics.Save();
@@ -311,26 +316,37 @@ internal sealed class ThemeButton : Button
             {
                 using var path = AppTheme.Rounded(bounds, AppTheme.Scale(this, CornerRadius));
                 e.Graphics.FillPath(brush, path);
-                if (FlatAppearance.BorderSize > 0)
+                // While the focus ring is visible the own outline is skipped,
+                // so the two never form a double frame.
+                if (FlatAppearance.BorderSize > 0 && !focusRing)
                 {
                     e.Graphics.DrawPath(pen, path);
                 }
             }
-            if (Enabled && Focused && ShowFocusCues)
+            if (focusRing)
             {
-                int inset = Math.Max(3, (int)Math.Round(AppTheme.Scale(this, 3)));
-                var focus = Rectangle.Inflate(ClientRectangle, -inset, -inset);
-                if (focus.Width > 0 && focus.Height > 0)
+                if (highContrast)
                 {
-                    if (highContrast)
+                    int inset = Math.Max(3, (int)Math.Round(AppTheme.Scale(this, 3)));
+                    var focus = Rectangle.Inflate(ClientRectangle, -inset, -inset);
+                    if (focus.Width > 0 && focus.Height > 0)
                     {
                         ControlPaint.DrawFocusRectangle(e.Graphics, focus, foreground, background);
                     }
-                    else
+                }
+                else
+                {
+                    // 3 px ring along the edge; white on accent fills (Accent on
+                    // Primary is only 2.2:1), translucent Accent elsewhere.
+                    bool onAccent = IsPrimary || selected;
+                    float ring = Math.Max(2, AppTheme.Scale(this, 3));
+                    float inset = AppTheme.Scale(this, onAccent ? 2 : 1.5f) + ring / 2;
+                    var focus = RectangleF.Inflate(new RectangleF(0, 0, Width, Height), -inset, -inset);
+                    if (focus.Width > 0 && focus.Height > 0)
                     {
-                        using var focusPath = AppTheme.Rounded(focus, AppTheme.Scale(this, Math.Max(0, CornerRadius - 3)));
-                        Color focusColor = IsPrimary ? AppTheme.PrimaryText : AppTheme.Accent;
-                        using var focusPen = new Pen(focusColor, Math.Max(2, AppTheme.Scale(this, 2)));
+                        using var focusPath = AppTheme.Rounded(focus, Math.Max(0, AppTheme.Scale(this, CornerRadius) - inset));
+                        Color focusColor = onAccent ? AppTheme.PrimaryText : Color.FromArgb(180, AppTheme.Accent);
+                        using var focusPen = new Pen(focusColor, ring);
                         e.Graphics.DrawPath(focusPen, focusPath);
                     }
                 }
@@ -343,35 +359,21 @@ internal sealed class ThemeButton : Button
             Math.Max(0, ClientSize.Height - Padding.Vertical - 4));
         if (NavigationIcon is "overview" or "proxy" or "exclusions" or "help")
         {
-            int iconSize = (int)Math.Round(AppTheme.Scale(this, 18));
-            int iconGap = (int)Math.Round(AppTheme.Scale(this, 12));
+            int iconSize = (int)Math.Round(AppTheme.Scale(this, 16));
+            int iconGap = (int)Math.Round(AppTheme.Scale(this, 10));
             var iconBounds = new Rectangle(textBounds.Left, (Height - iconSize) / 2, iconSize, iconSize);
             if (RightToLeft == RightToLeft.Yes)
             {
                 iconBounds.X = textBounds.Right - iconSize;
             }
 
-            DrawNavigationIcon(e.Graphics, iconBounds, foreground, NavigationIcon);
+            DrawNavigationIcon(e.Graphics, iconBounds, iconColor, NavigationIcon);
             if (RightToLeft != RightToLeft.Yes)
             {
                 textBounds.X += iconSize + iconGap;
             }
 
             textBounds.Width = Math.Max(0, textBounds.Width - iconSize - iconGap);
-        }
-        if (selected)
-        {
-            int diameter = Math.Max(4, (int)Math.Round(AppTheme.Scale(this, 5)));
-            int edge = (int)Math.Round(AppTheme.Scale(this, 14));
-            var mark = new Rectangle(RightToLeft == RightToLeft.Yes ? edge : Width - edge - diameter,
-                (Height - diameter) / 2, diameter, diameter);
-            using var marker = new SolidBrush(foreground);
-            e.Graphics.FillEllipse(marker, mark);
-            textBounds.Width = Math.Max(0, textBounds.Width - edge);
-            if (RightToLeft == RightToLeft.Yes)
-            {
-                textBounds.X += edge;
-            }
         }
         if (pressed)
         {
