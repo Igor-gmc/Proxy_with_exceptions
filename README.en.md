@@ -7,7 +7,7 @@ proxy, with exceptions for applications, IP addresses and subnets. It uses
 sing-box, a Wintun virtual adapter, and its own Windows Filtering Platform
 (WFP) module.
 
-Version: **0.4.01**. Requires
+Version: **0.4.05**. Requires
 Windows 10/11 x64 and administrator privileges to run.
 
 ## Features
@@ -34,7 +34,7 @@ name. SOCKS5 is used for TCP; unsupported UDP is intended to remain blocked.
 The application currently uses Russian interface labels. Their English meanings
 are included below to help you find the controls.
 
-1. Build the application as described below and run `ProxyBridge-0.4.01.exe`.
+1. Build the application as described below and run `ProxyBridge-0.4.05.exe`.
 2. On «Прокси» (Proxy), enter the address, port, protocol, and credentials if required.
 3. Click «Сохранить / применить» (Save / apply), then «Подключить» (Connect).
 4. Wait for a successful connection check on «Обзор» (Overview).

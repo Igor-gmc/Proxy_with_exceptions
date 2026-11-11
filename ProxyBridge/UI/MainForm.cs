@@ -202,6 +202,14 @@ internal sealed partial class MainForm : Form
     async Task InitializeConnectionState()
     {
         AppLog.Write($"STARTUP startup={startedAtLogon} autoConnect={autoConnectOnStartup} observeOnly={observeOnly} settingsLoaded={initialSettingsReady}");
+        if (initialSettingsError == null)
+        {
+            // Startup only: reconnects and recovery do not repeat the list.
+            foreach (string line in ExclusionLog.StartupLines(settings))
+            {
+                AppLog.Write(line);
+            }
+        }
         ObserveStartupProtection();
         if (initialSettingsError != null)
         {

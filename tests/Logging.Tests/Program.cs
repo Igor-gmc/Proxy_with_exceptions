@@ -59,7 +59,7 @@ Test("New logger instance appends to an existing session", path =>
     Require(text.Contains("FIRST-SESSION-SENTINEL") && text.Contains("SECOND-SESSION-SENTINEL"), "Session was lost");
 });
 
-Test("Production 25 MB file appends below its limit and overwrites on overflow", path =>
+Test("Production 25 MB file appends below its limit and rotates to .1 on overflow", path =>
 {
     const string old = "PREVIOUS-CONTENTS-SENTINEL";
     Seed(path, productionLimit - 4096, old);
@@ -76,8 +76,21 @@ Test("Production 25 MB file appends below its limit and overwrites on overflow",
     Require(writer.Write("AFTER-OVERFLOW-SENTINEL"), "Overflow write failed");
     string text = Read(path);
     Require(new FileInfo(path).Length <= productionLimit, "Limit exceeded");
-    Require(text.Contains("AFTER-OVERFLOW-SENTINEL") && !text.Contains(old), "Overwrite did not replace previous contents");
-    Require(Directory.GetFiles(Path.GetDirectoryName(path)!).Length == 1, "Unexpected archive file");
+    Require(text.Contains("AFTER-OVERFLOW-SENTINEL") && !text.Contains(old), "Rotation did not start a new file");
+    Require(text.Contains("previous records moved to " + Path.GetFileName(path) + ".1"), "Rotation marker missing");
+    string previous = path + ".1";
+    Require(File.Exists(previous) && new FileInfo(previous).Length == productionLimit - 1, "Previous generation not preserved");
+    using (var input = File.OpenRead(previous))
+    {
+        byte[] prefix = new byte[Encoding.UTF8.GetByteCount(old)];
+        input.ReadExactly(prefix);
+        Require(Encoding.UTF8.GetString(prefix) == old, "Previous generation content changed");
+    }
+    Require(Directory.GetFiles(Path.GetDirectoryName(path)!).Length == 2, "Only one previous generation may be kept");
+    Seed(path, productionLimit - 1, "SECOND-OVERFLOW-SENTINEL");
+    Require(writer.Write("AFTER-SECOND-OVERFLOW"), "Second overflow write failed");
+    Require(Read(previous).StartsWith("SECOND-OVERFLOW-SENTINEL", StringComparison.Ordinal), "Older generation not replaced");
+    Require(Directory.GetFiles(Path.GetDirectoryName(path)!).Length == 2, "Rotation accumulated archives");
 });
 
 Test("Existing oversized file is replaced before the next record", path =>

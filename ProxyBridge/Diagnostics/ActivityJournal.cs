@@ -21,28 +21,35 @@ internal sealed class ActivityFileSink(string filePath, long maxBytes = 25_000_0
             return;
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(filePath))!);
-        using var file = new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
-        file.Position = file.Length;
-        foreach (string record in records)
+        string fullPath = Path.GetFullPath(filePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        var file = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
+        try
         {
-            // Serialize complete JSON records; never split UTF-8 or leave invalid JSON.
-            byte[] bytes = Utf8.GetBytes(record + "\r\n");
-            if (bytes.Length > Math.Min(64_000, maxBytes - 256))
+            file.Position = file.Length;
+            foreach (string record in records)
             {
-                bytes = Utf8.GetBytes("{\"kind\":\"monitor.record-omitted\",\"reason\":\"size-limit\"}\r\n");
-            }
+                // Serialize complete JSON records; never split UTF-8 or leave invalid JSON.
+                byte[] bytes = Utf8.GetBytes(record + "\r\n");
+                if (bytes.Length > Math.Min(64_000, maxBytes - 256))
+                {
+                    bytes = Utf8.GetBytes("{\"kind\":\"monitor.record-omitted\",\"reason\":\"size-limit\"}\r\n");
+                }
 
-            if (file.Length > maxBytes - bytes.Length)
-            {
-                file.SetLength(0);
-                file.Position = 0;
-                file.Write(Utf8.GetBytes("{\"kind\":\"monitor.log-reset\",\"reason\":\"size-limit\"}\r\n"));
+                if (file.Length > maxBytes - bytes.Length)
+                {
+                    bool preserved = LogRotation.Rotate(ref file, fullPath);
+                    file.Write(Utf8.GetBytes(preserved
+                        ? "{\"kind\":\"monitor.log-reset\",\"reason\":\"size-limit\",\"previous\":"
+                            + JsonSerializer.Serialize(Path.GetFileName(LogRotation.PreviousPath(fullPath))) + "}\r\n"
+                        : "{\"kind\":\"monitor.log-reset\",\"reason\":\"size-limit\",\"previous\":null}\r\n"));
+                }
+                file.Write(bytes);
             }
-            file.Write(bytes);
+            // One durability flush for the whole batch, never on the ETW thread.
+            file.Flush(flushToDisk: true);
         }
-        // One durability flush for the whole batch, never on the ETW thread.
-        file.Flush(flushToDisk: true);
+        finally { file.Dispose(); }
     }
     public void Dispose()
     {

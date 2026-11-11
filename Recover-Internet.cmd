@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0ProxyBridge-0.4.01.exe" --recover
+start "" "%~dp0ProxyBridge-0.4.05.exe" --recover

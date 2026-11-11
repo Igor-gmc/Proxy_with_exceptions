@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../ProxyBridge/Logging/BoundedLogFile.cs" Link="BoundedLogFile.cs" />
+    <Compile Include="../../ProxyBridge/Logging/LogRotation.cs" Link="LogRotation.cs" />
   </ItemGroup>
 </Project>

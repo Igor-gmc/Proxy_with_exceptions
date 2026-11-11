@@ -9,6 +9,7 @@ internal sealed partial class MainForm
     readonly ProtectionController protection;
     DiagnosticContext? diagnosticContext;
     Exception? pendingConnectionFailure;
+    readonly ProbeFailureTracker probeFailures = new();
 
     void WireEngineEvents()
     {
@@ -150,11 +151,9 @@ internal sealed partial class MainForm
 
         try
         {
+            // A failed attempt is only recorded: when a fallback endpoint then
+            // succeeds the connection is healthy and must not open an incident.
             DiagnosticJournal.Record("probe.phase", observation, observation.EventTime, observation.MonoTicks);
-            if (observation.Outcome is ProbeOutcome.Failed or ProbeOutcome.TimedOut)
-            {
-                DiagnosticJournal.Trigger("probe-first-error", observation);
-            }
         }
         catch { }
     }
@@ -199,6 +198,7 @@ internal sealed partial class MainForm
             catch { }
         }
         PromoteMonitorMutation();
+        probeFailures.Reset();
         using var operation = AppLog.BeginOperation("connection.recovery");
         var elapsed = Stopwatch.StartNew();
         SetVisualState(ProxyVisualState.Failed);
@@ -238,11 +238,55 @@ internal sealed partial class MainForm
                 await StartProtected();
                 return;
             }
-            await Probe(cancellationToken, quietSuccess: true);
+            Exception? probeFailure = null;
+            try
+            {
+                await Probe(cancellationToken, quietSuccess: true);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) { probeFailure = ex; }
             cancellationToken.ThrowIfCancellationRequested();
             if (!protection.IsConnectedCandidate())
             {
-                throw new IOException("Защита изменилась во время проверки подключения.");
+                // Engine or policy loss is never tolerated, regardless of the probe.
+                probeFailures.Reset();
+                throw new IOException("Защита изменилась во время проверки подключения.", probeFailure);
+            }
+
+            if (probeFailure != null)
+            {
+                int attempt = probeFailures.ConsecutiveFailures + 1;
+                string codes = AppLog.ExceptionCodes(probeFailure);
+                if (attempt == 1)
+                {
+                    // Network/route/filter state at the start of a failure streak;
+                    // read-only, does not alter the policy or the engine.
+                    AppLog.Snapshot("monitor.probe-failure-first", settings);
+                }
+                if (probeFailures.RecordFailure())
+                {
+                    AppLog.Write($"MONITOR probe-failure consecutive={attempt} threshold={probeFailures.Threshold} generation={engine.Generation} enginePid={engine.ProcessId}; restarting tunnel; errors={codes}");
+                    throw new AggregateException(
+                        $"Проверка HTTPS не пройдена {attempt} раза подряд; туннель будет перезапущен.", probeFailure);
+                }
+
+                // The tunnel and the active WFP policy are still verified, so
+                // traffic remains fail-closed. Keep existing connections alive.
+                AppLog.Write($"MONITOR probe-failure consecutive={attempt} threshold={probeFailures.Threshold} generation={engine.Generation} enginePid={engine.ProcessId}; tunnel kept, policy verified; errors={codes}");
+                CacheDiagnosticContext("monitor.probe-degraded", true);
+                SetStatus($"Связь с прокси нестабильна · проверка {attempt}/{probeFailures.Threshold} не пройдена · KillSwitch активен",
+                    ProxyVisualState.Connected);
+                return;
+            }
+
+            if (probeFailures.ConsecutiveFailures != 0)
+            {
+                AppLog.Write($"MONITOR probe-recovered afterFailures={probeFailures.ConsecutiveFailures}");
+                probeFailures.Reset();
+                SetStatus("Подключено · KillSwitch активен · DNS через прокси", ProxyVisualState.Connected);
             }
 
             CacheDiagnosticContext("monitor.policy-verified", true);
@@ -383,6 +427,7 @@ internal sealed partial class MainForm
     async Task StartProtected()
     {
         PromoteMonitorMutation();
+        probeFailures.Reset();
         var elapsed = Stopwatch.StartNew();
         string stage = "prepare";
         bool connected = false;
@@ -490,6 +535,32 @@ internal sealed partial class MainForm
     }
 
     async Task Probe(CancellationToken cancellationToken = default, bool quietSuccess = false)
+    {
+        long generation = engine.Generation;
+        try
+        {
+            await ProbeCore(cancellationToken, quietSuccess);
+        }
+        catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
+        {
+            // The whole probe failed (every endpoint/attempt). The ring still
+            // holds the failed attempts recorded by ObserveProbe before this.
+            if (!observeOnly)
+            {
+                try
+                {
+                    DiagnosticJournal.Trigger("probe-failed", new
+                    {
+                        EngineGeneration = generation,
+                        ErrorCodes = AppLog.ExceptionCodes(ex)
+                    });
+                }
+                catch { /* Diagnostics must not alter the probe outcome. */ }
+            }
+            throw;
+        }
+    }
+    async Task ProbeCore(CancellationToken cancellationToken, bool quietSuccess)
     {
         var context = new ProbeContext(engine.Generation);
         if (!quietSuccess)

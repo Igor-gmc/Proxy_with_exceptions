@@ -51,6 +51,7 @@ async Task Test(string name, Func<Task> action)
 var settings = new Settings("192.0.2.10", 1080, "qa-user", "synthetic-core-only", "http");
 await ProtectionControllerTests.RunAsync(Test, settings);
 await ConnectionProbeTests.RunAsync(Test);
+await ProbeFailureTrackerTests.RunAsync(Test);
 await ConfigurationTests.RunAsync(Test);
 await DirectIpv6PolicyTests.RunAsync(Test);
 await AddressExclusionTests.RunAsync(Test);

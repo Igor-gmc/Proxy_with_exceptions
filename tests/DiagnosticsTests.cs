@@ -110,6 +110,44 @@ internal static class DiagnosticsTests
             clock.Advance(60);
             Check(gate.TryBegin() is string next && next != first);
         }));
+        await test("engine output: outbound/direct errors are classified direct-error and never trigger", _ => Done(() =>
+        {
+            const string red = "\u001b[31mERROR\u001b[0m";
+            (string Line, string Category, bool Trigger)[] cases =
+            [
+                (red + " [1825009358 5.0s] connection: open connection to 149.154.167.92:443 using outbound/direct[direct]: dial tcp 149.154.167.92:443: i/o timeout", "direct-error", false),
+                (red + " [4119431532 5.1s] connection: open connection to 1.1.1.1:443 using outbound/http[proxy]: dial tcp 203.0.113.10:8000: i/o timeout", "proxy-dial-error", true),
+                (red + " [1 2.0s] connection: open connection to 1.1.1.1:443 using outbound/http[proxy]: read tcp 10.0.0.2:50000->203.0.113.10:8000: connection reset", "proxy-read-error", true),
+                (red + " [2 0.1s] connection: open connection to 1.1.1.1:443 using outbound/socks[proxy]: socks5: request rejected", "proxy-rejected", true),
+                (red + " [2129131926 16.43s] connection: open connection to 198.51.100.20:443 using outbound/http[proxy]: unexpected status: 502 Bad Gateway", "engine-error", true),
+                (red + " [3 1.0s] connection: open connection to 149.154.167.51:443 using outbound/direct[direct]: context canceled", "canceled", false),
+                ("INFO [4 0ms] inbound/tun[tun-in]: inbound connection to 1.1.1.1:443", "output", false),
+                ("FATAL[0000] start service: initialize inbound/tun[tun-in]: configure tun interface", "engine-error", true),
+                (red + " [5 5.0s] connection: open connection to 8.8.8.8:443 using OUTBOUND/DIRECT[direct]: dial tcp 8.8.8.8:443: i/o timeout", "direct-error", false),
+            ];
+            foreach (var (line, category, trigger) in cases)
+            {
+                Check(EngineOutputClassifier.Classify(line) == category);
+                Check(EngineOutputClassifier.ShouldTrigger(category, expectedStop: false) == trigger);
+                Check(!EngineOutputClassifier.ShouldTrigger(category, expectedStop: true));
+            }
+        }));
+        await test("incident window: coalesced triggers extend post-window by 30 s, capped at 5 min, never shrinks", _ => Done(() =>
+        {
+            long f = TimeSpan.TicksPerSecond;
+            long first = 1000 * f;
+            long window = DiagnosticEpisodeWindow.Initial(first, f);
+            Check(window == first + 30 * f);
+            window = DiagnosticEpisodeWindow.Apply(window, DiagnosticEpisodeWindow.ExtendRequest(first + 20 * f, f), first, f);
+            Check(window == first + 50 * f);
+            long earlier = DiagnosticEpisodeWindow.ExtendRequest(first + 5 * f, f);
+            Check(DiagnosticEpisodeWindow.Apply(window, earlier, first, f) == window);
+            Check(DiagnosticEpisodeWindow.Apply(window, 0, first, f) == window);
+            window = DiagnosticEpisodeWindow.Apply(window, DiagnosticEpisodeWindow.ExtendRequest(first + 290 * f, f), first, f);
+            Check(window == first + 300 * f);
+            window = DiagnosticEpisodeWindow.Apply(window, DiagnosticEpisodeWindow.ExtendRequest(first + 400 * f, f), first, f);
+            Check(window == first + 300 * f);
+        }));
         await test("incident create refuses overwrite and preserves pre/post evidence order", dir => Done(() =>
         {
             var store = new DiagnosticIncidentStore(dir);
@@ -137,6 +175,25 @@ internal static class DiagnosticsTests
             Check(File.ReadAllText(foreign) == "keep");
             Throws<ArgumentException>(() => store.Write(Incident("../outside")));
             Throws<IOException>(() => store.Append(foreign, [Entry("{}")]));
+        }));
+        await test("severe incidents are renamed, appendable and pruned after ordinary ones", dir => Done(() =>
+        {
+            var store = new DiagnosticIncidentStore(dir, maxFiles: 2, maxTotalBytes: 4096, maxFileBytes: 1024);
+            string severe = store.MarkSevere(store.Write(Incident("20261104-0")));
+            Check(DiagnosticIncidentStore.IsSevere(severe) && File.Exists(severe));
+            Check(store.MarkSevere(severe) == severe);
+            store.Append(severe, [Entry("{\"kind\":\"after-mark\"}", 2)]);
+            Check(File.ReadAllText(severe).Contains("after-mark", StringComparison.Ordinal));
+            for (int i = 1; i < 4; i++)
+            {
+                store.Write(Incident("20261104-" + i));
+            }
+
+            var names = new DirectoryInfo(dir).GetFiles("ProxyBridge-incident-*.jsonl").Select(f => f.Name).ToArray();
+            Check(names.Length == 2 && names.Any(DiagnosticIncidentStore.IsSevere) && names.Any(n => n.Contains("20261104-3")));
+            string foreign = Path.Combine(dir, "user.jsonl");
+            File.WriteAllText(foreign, "keep");
+            Throws<IOException>(() => store.MarkSevere(foreign));
         }));
         await test("append also preserves aggregate incident byte limit", dir => Done(() =>
         {

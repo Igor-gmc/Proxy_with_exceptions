@@ -26,6 +26,10 @@ internal static class DiagnosticJournal
     static long queued, written, dropped, incidentDropped, errors, depth, highWater, lastWriteMs, writeStarted;
     static string? lastError;
     static int enabled, started, writerAvailable;
+    static long extendPostUntil;
+    static string? severeIncident;
+    // Episodes that tore down or lost the tunnel are retained preferentially.
+    static bool IsSevere(string reason) => reason is "recovery-requested" or "unexpected-engine-exit";
     public static bool Enabled => Volatile.Read(ref enabled) != 0;
     public static string FilePath => Path.Combine(Settings.DataDir, "ProxyBridge-diagnostics.log");
     public static string IncidentDirectory => Path.Combine(Settings.DataDir, "incidents");
@@ -121,10 +125,31 @@ internal static class DiagnosticJournal
 
         try
         {
+            bool severe = IsSevere(reason);
             string? id = Episodes.TryBegin();
             if (id == null)
             {
+                // The episode keeps its first incident file, but later triggers
+                // (e.g. the tunnel restart after repeated probe failures) are
+                // recorded and keep the post-trigger window open.
+                string? current = Episodes.Current;
+                Record("incident.trigger-coalesced", new
+                {
+                    reason,
+                    state,
+                    incident = current,
+                    severe
+                });
+                Interlocked.Exchange(ref extendPostUntil, DiagnosticEpisodeWindow.ExtendRequest(Stopwatch.GetTimestamp(), Stopwatch.Frequency));
+                if (severe && current != null)
+                {
+                    Volatile.Write(ref severeIncident, current);
+                }
                 return;
+            }
+            if (severe)
+            {
+                Volatile.Write(ref severeIncident, id);
             }
 
             Record("incident.trigger", new
@@ -159,13 +184,16 @@ internal static class DiagnosticJournal
             version = AppVersion.Display,
             timestampFrequency = Stopwatch.Frequency,
             preWindowSeconds = 60,
-            postWindowSeconds = 30,
+            postWindowSeconds = DiagnosticEpisodeWindow.PostWindowSeconds,
+            maxEpisodeSeconds = DiagnosticEpisodeWindow.MaxEpisodeSeconds,
             ringBytes = 4_000_000,
             ringRecords = 4096,
             outputQueue = 1024,
             incidentQueue = 2,
-            incidentMaxFiles = 5,
-            incidentMaxBytes = 12_000_000,
+            incidentMaxFiles = DiagnosticIncidentStore.DefaultMaxFiles,
+            incidentMaxFileBytes = DiagnosticIncidentStore.DefaultMaxFileBytes,
+            incidentMaxTotalBytes = DiagnosticIncidentStore.DefaultMaxTotalBytes,
+            severeIncidentsRetainedFirst = true,
             activeProbe = "test-only controlled transport; production collector does not bypass Guard"
         });
     }
@@ -183,8 +211,9 @@ internal static class DiagnosticJournal
             using var sink = new ActivityFileSink(FilePath);
             Interlocked.Exchange(ref writerAvailable, 1);
             var incidents = new DiagnosticIncidentStore(IncidentDirectory);
-            string? activePath = null;
-            long postUntil = 0, firstSequence = 0;
+            string? activePath = null, activeId = null;
+            bool activeSevere = false;
+            long postUntil = 0, firstSequence = 0, activeTriggerTicks = 0;
             var batch = new List<DiagnosticRingEntry>(128);
             while (!Output.Reader.Completion.IsCompleted || !Incidents.Reader.Completion.IsCompleted)
             {
@@ -193,8 +222,11 @@ internal static class DiagnosticJournal
                     try
                     {
                         activePath = incidents.Write(incident);
+                        activeId = incident.Id;
+                        activeSevere = false;
+                        activeTriggerTicks = incident.TriggerTicks;
                         firstSequence = incident.Before.LastOrDefault()?.Sequence ?? 0;
-                        postUntil = incident.TriggerTicks + 30 * Stopwatch.Frequency;
+                        postUntil = DiagnosticEpisodeWindow.Initial(incident.TriggerTicks, Stopwatch.Frequency);
                     }
                     catch (Exception ex)
                     {
@@ -205,6 +237,20 @@ internal static class DiagnosticJournal
                             incident.Id,
                             error = AppLog.ExceptionCodes(ex)
                         });
+                    }
+                }
+                if (activePath != null && activeId != null && Episodes.Current == activeId)
+                {
+                    postUntil = DiagnosticEpisodeWindow.Apply(postUntil, Interlocked.Read(ref extendPostUntil),
+                        activeTriggerTicks, Stopwatch.Frequency);
+                    if (!activeSevere && Volatile.Read(ref severeIncident) == activeId)
+                    {
+                        try
+                        {
+                            activePath = incidents.MarkSevere(activePath);
+                            activeSevere = true;
+                        }
+                        catch (Exception ex) { Error(ex); activeSevere = true; }
                     }
                 }
                 while (batch.Count < 128 && Output.Reader.TryRead(out var entry))

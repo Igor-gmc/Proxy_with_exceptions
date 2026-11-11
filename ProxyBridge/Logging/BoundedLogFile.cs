@@ -37,38 +37,46 @@ internal sealed class BoundedLogFile(string filePath, long maxBytes = 25_000_000
 
                 string fullPath = Path.GetFullPath(filePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                using var file = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
-                foreach (var item in entries)
+                var file = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
+                try
                 {
-                    string prefix = $"{item.Time:yyyy-MM-dd HH:mm:ss.fff zzz} [PID {Environment.ProcessId}] ";
-                    byte[] rollover = Utf8.GetBytes(prefix + "[LOG RESET: size limit reached; previous records overwritten]\r\n");
-                    int entryLimit = (int)Math.Min(64 * 1024, maxBytes - rollover.Length);
-                    string clean = secrets.Redact(item.Message);
-                    // Escape embedded line breaks so engine output cannot forge separate records.
-                    string entry = prefix + clean.Replace("\r", "\\r").Replace("\n", "\\n");
-                    byte[] suffix = Utf8.GetBytes(" [TRUNCATED]\r\n");
-                    byte[] bytes;
-                    if (Utf8.GetByteCount(entry) + 2 <= entryLimit)
+                    foreach (var item in entries)
                     {
-                        bytes = Utf8.GetBytes(entry + "\r\n");
+                        string prefix = $"{item.Time:yyyy-MM-dd HH:mm:ss.fff zzz} [PID {Environment.ProcessId}] ";
+                        byte[] rollover = Utf8.GetBytes(prefix + "[LOG RESET: size limit reached; previous records moved to "
+                            + Path.GetFileName(LogRotation.PreviousPath(fullPath)) + "]\r\n");
+                        int entryLimit = (int)Math.Min(64 * 1024, maxBytes - rollover.Length);
+                        string clean = secrets.Redact(item.Message);
+                        // Escape embedded line breaks so engine output cannot forge separate records.
+                        string entry = prefix + clean.Replace("\r", "\\r").Replace("\n", "\\n");
+                        byte[] suffix = Utf8.GetBytes(" [TRUNCATED]\r\n");
+                        byte[] bytes;
+                        if (Utf8.GetByteCount(entry) + 2 <= entryLimit)
+                        {
+                            bytes = Utf8.GetBytes(entry + "\r\n");
+                        }
+                        else
+                        {
+                            bytes = new byte[entryLimit];
+                            Utf8.GetEncoder().Convert(entry.AsSpan(), bytes.AsSpan(0, entryLimit - suffix.Length), true,
+                                out _, out int written, out _);
+                            suffix.CopyTo(bytes, written);
+                            Array.Resize(ref bytes, written + suffix.Length);
+                        }
+                        if (file.Length > maxBytes - bytes.Length)
+                        {
+                            if (!LogRotation.Rotate(ref file, fullPath))
+                            {
+                                rollover = Utf8.GetBytes(prefix + "[LOG RESET: size limit reached; previous records overwritten]\r\n");
+                            }
+                            file.Write(rollover);
+                        }
+                        file.Position = file.Length;
+                        file.Write(bytes);
                     }
-                    else
-                    {
-                        bytes = new byte[entryLimit];
-                        Utf8.GetEncoder().Convert(entry.AsSpan(), bytes.AsSpan(0, entryLimit - suffix.Length), true,
-                            out _, out int written, out _);
-                        suffix.CopyTo(bytes, written);
-                        Array.Resize(ref bytes, written + suffix.Length);
-                    }
-                    if (file.Length > maxBytes - bytes.Length)
-                    {
-                        file.SetLength(0);
-                        file.Write(rollover);
-                    }
-                    file.Position = file.Length;
-                    file.Write(bytes);
+                    file.Flush(flushToDisk: true);
                 }
-                file.Flush(flushToDisk: true);
+                finally { file.Dispose(); }
                 lastError = null;
                 return true;
             }

@@ -44,6 +44,31 @@ internal static class SettingsTests
             Require(defaults.Port is >= 1 and <= 65535 && (defaults.Protocol is "http" or "socks"));
             Require(!Directory.Exists(Settings.DataDir));
         });
+        await Isolated("startup exclusion log lists every EXE and address rule without endpoint or credentials", () =>
+        {
+            var settings = Settings.Default with
+            {
+                Host = "proxy.example.test",
+                Username = "user-secret-name",
+                Password = "pass-secret-value",
+                ExcludedApplications = [@"C:\Program Files\Mozilla Firefox\firefox.exe", @"C:\Tools\git.exe"],
+                ExcludedAddresses = ["192.168.1.0/24"]
+            };
+            string[] lines = ExclusionLog.StartupLines(settings);
+            Require(lines.Length == 1 + settings.ExcludedApplications.Length + settings.ExcludedAddresses.Length);
+            Require(lines[0] == $"STARTUP exclusions applications={settings.ExcludedApplications.Length} addresses={settings.ExcludedAddresses.Length}");
+            for (int i = 0; i < settings.ExcludedApplications.Length; i++)
+            {
+                Require(lines.Contains($"STARTUP exclusion application[{i + 1}]={settings.ExcludedApplications[i]}"));
+            }
+            for (int i = 0; i < settings.ExcludedAddresses.Length; i++)
+            {
+                Require(lines.Contains($"STARTUP exclusion address[{i + 1}]={settings.ExcludedAddresses[i]}"));
+            }
+            Require(lines.All(l => !l.Contains("pass-secret-value") && !l.Contains("user-secret-name") && !l.Contains("proxy.example.test")));
+            string[] empty = ExclusionLog.StartupLines(Settings.Default);
+            Require(empty.Length == 1 && empty[0] == "STARTUP exclusions applications=0 addresses=0");
+        });
         await Isolated("loading missing settings returns setup state without persisting a configuration", () =>
         {
             Require(!Directory.Exists(Settings.DataDir));

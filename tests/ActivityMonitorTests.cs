@@ -251,6 +251,8 @@ internal static class ActivityMonitorTests
 
             Require(records.Any(r => Parse(r).GetProperty("kind").GetString() == "monitor.log-reset"), "Rollover was silent.");
             Require(!string.Join("", records).Contains("\"marker\":\"old\""), "Old file contents survived rollover.");
+            Require(File.Exists(path + ".1") && File.ReadAllText(path + ".1").Contains("\"marker\":\"old\""), "Previous generation was not preserved.");
+            Require(records.Any(r => Parse(r).TryGetProperty("previous", out var prev) && prev.GetString() == "activity.log.1"), "Rollover marker does not name the previous file.");
             Require(records.Any(r => r.Contains("\"marker\":\"last\"")), "Newest record disappeared during rotation.");
             using var reopened = new ActivityFileSink(path, 1024);
             reopened.WriteBatch([Record("reopened")]);

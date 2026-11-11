@@ -40,13 +40,7 @@ internal sealed class Engine : IDisposable
         if (engineOutput)
         {
             bool expectedStop = Interlocked.Read(ref stoppingGeneration) == observedGeneration;
-            bool error = message.Contains("ERROR", StringComparison.Ordinal) || message.Contains("FATAL", StringComparison.Ordinal);
-            bool canceled = message.Contains("context canceled", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("operation was canceled", StringComparison.OrdinalIgnoreCase);
-            string category = !error ? "output" : canceled ? "canceled" :
-                message.Contains("dial tcp", StringComparison.OrdinalIgnoreCase) ? "proxy-dial-error" :
-                message.Contains("read tcp", StringComparison.OrdinalIgnoreCase) ? "proxy-read-error" :
-                message.Contains("socks5: request rejected", StringComparison.OrdinalIgnoreCase) ? "proxy-rejected" : "engine-error";
+            string category = EngineOutputClassifier.Classify(message);
             try
             {
                 var evidence = new
@@ -57,7 +51,7 @@ internal sealed class Engine : IDisposable
                     ExpectedStop = expectedStop
                 };
                 DiagnosticJournal.Record("engine.output", evidence, eventTime, mono);
-                if (error && !canceled && !expectedStop)
+                if (EngineOutputClassifier.ShouldTrigger(category, expectedStop))
                 {
                     DiagnosticJournal.Trigger(category, evidence);
                 }

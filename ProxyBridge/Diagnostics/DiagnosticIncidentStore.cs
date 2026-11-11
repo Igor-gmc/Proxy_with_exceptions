@@ -3,10 +3,16 @@ using System.Text.Json;
 
 namespace ProxyBridge;
 
-internal sealed class DiagnosticIncidentStore(string directory, int maxFiles = 5,
-    long maxTotalBytes = 60_000_000, long maxFileBytes = 12_000_000)
+internal sealed class DiagnosticIncidentStore(string directory, int maxFiles = DiagnosticIncidentStore.DefaultMaxFiles,
+    long maxTotalBytes = DiagnosticIncidentStore.DefaultMaxTotalBytes, long maxFileBytes = DiagnosticIncidentStore.DefaultMaxFileBytes)
 {
+    public const int DefaultMaxFiles = 10;
+    public const long DefaultMaxTotalBytes = 100_000_000;
+    public const long DefaultMaxFileBytes = 12_000_000;
     const string Prefix = "ProxyBridge-incident-";
+    // Episodes that restarted or lost the tunnel. Pruning removes ordinary
+    // incidents first so a rare teardown is not displaced by routine noise.
+    const string SevereSuffix = ".recovery.jsonl";
     static readonly UTF8Encoding Utf8 = new(false);
     public string Write(DiagnosticIncident incident)
     {
@@ -105,6 +111,30 @@ internal sealed class DiagnosticIncidentStore(string directory, int maxFiles = 5
         }
         Prune(path);
     }
+    public static bool IsSevere(string path) => path.EndsWith(SevereSuffix, StringComparison.Ordinal);
+
+    // Renames an owned incident file to mark its episode as severe; returns the new path.
+    public string MarkSevere(string path)
+    {
+        if (IsSevere(path))
+        {
+            return path;
+        }
+
+        string full = Path.GetFullPath(path);
+        string expected = Path.GetFullPath(directory) + Path.DirectorySeparatorChar;
+        string name = Path.GetFileName(full);
+        if (!full.StartsWith(expected, StringComparison.OrdinalIgnoreCase) ||
+            !name.StartsWith(Prefix, StringComparison.Ordinal) || !name.EndsWith(".jsonl", StringComparison.Ordinal))
+        {
+            throw new IOException("Foreign incident path.");
+        }
+
+        BundledAssets.RejectReparsePoints(full);
+        string target = full[..^".jsonl".Length] + SevereSuffix;
+        File.Move(full, target);
+        return target;
+    }
     void Prune(string current)
     {
         var files = new DirectoryInfo(directory).GetFiles(Prefix + "*.jsonl")
@@ -113,7 +143,9 @@ internal sealed class DiagnosticIncidentStore(string directory, int maxFiles = 5
         long bytes = files.Sum(f => f.Length);
         while (files.Count > maxFiles || bytes > maxTotalBytes)
         {
-            var oldest = files.LastOrDefault(f => !string.Equals(f.FullName, current, StringComparison.OrdinalIgnoreCase));
+            bool Removable(FileInfo f) => !string.Equals(f.FullName, current, StringComparison.OrdinalIgnoreCase);
+            var oldest = files.LastOrDefault(f => Removable(f) && !IsSevere(f.Name))
+                ?? files.LastOrDefault(Removable);
             if (oldest == null)
             {
                 break;
